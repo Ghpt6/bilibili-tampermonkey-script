@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         哔哩哔哩 - 移除首页视频封面图
 // @namespace    https://www.bilibili.com/
-// @version      2.16.1
-// @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，「简介」「字幕」各带徽章（点「阅读全文」/「展开字幕」就地展开，字幕展开后右下角悬浮「收起字幕」，不用滚到末尾），字幕按原生时间轴一条一行并标出时间点（点时间点直接跳到视频该处），点「评论」弹窗里直接渲染评论（热门/最新、点赞数、表情、子回复），无简介 / 无字幕会提示，底部「点赞」点了就地给视频点赞（再点取消）/「评论」弹窗看评论 /「收藏」只显示数字不可点
+// @version      2.17.0
+// @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，「简介」「字幕」各带徽章（点「阅读全文」/「展开字幕」就地展开，字幕展开后右下角悬浮「收起字幕」，不用滚到末尾），字幕按原生时间轴一条一行并标出时间点（点时间点直接跳到视频该处），点「评论」弹窗里直接渲染评论（热门/最新、点赞数、表情、子回复），无简介 / 无字幕会提示，底部「点赞」点了就地给视频点赞（再点取消）/「评论」弹窗看评论 /「收藏」只显示数字不可点，另加一排质量指标（赞播比 / 评论率 / 收藏率 / 转发率 / 互动率 / 评赞比 / 藏赞比 / 转赞比 / 理性认可率）帮判断值不值得点
 // @author       you
 // @match        https://www.bilibili.com/*
 // @match        https://www.bilibili.com
@@ -17,12 +17,12 @@
  *   1. CONFIG   所有开关，改完保存刷新页面即可生效
  *   2. CSS      一张 <style data-bili-no-cover>，样式全在这里
  *   3. 工具     el / cleanText / clip / fmtNum / fmtTime / escapeHtml / fixUrl
- *   4. 缓存     localStorage：简介 zbili:desc:v4、字幕 zbili:sub:v2
+ *   4. 缓存     localStorage：简介 zbili:desc:v5、字幕 zbili:sub:v2
  *   5. 网络     fetchJSON + 队列限速（并发 2）+ 风控退避（-352/-412 停 30s）+ 点赞提交
  *   6. 简介     view 接口 → 简介 / 标签 / 播放·评论·收藏数
  *   7. 字幕     WBI 签名 → player/wbi/v2 → 字幕 JSON → [[秒, 正文], ...]
  *             展开后内联「收起」滚出视口时，右下角浮一个「收起字幕」（只服务最后展开的那块）
- *   8. 卡片     标题 +「UP主：」+「简介」+「字幕」+ meta + 操作栏（点赞就地提交）
+ *   8. 卡片     标题 +「UP主：」+「简介」+「字幕」+ meta + 操作栏 + 质量指标
  *   9. 评论     /x/v2/reply 分页渲染 + 子回复按需加载
  *  10. 启动     IntersectionObserver 懒加载 + MutationObserver 增量扫描
  * ========================================================================== */
@@ -49,6 +49,9 @@
 
     /** 是否在卡片底部显示「点赞 / 评论 / 收藏」操作栏 */
     showActions: true,
+
+    /** 是否在操作栏下面显示质量指标（赞播比 / 评论率 / 收藏率 / 互动率 …），鼠标悬停看公式和参考区间 */
+    showQuality: true,
 
     /** 点「评论」时是在弹窗里看评论区（true），还是直接跳视频页（false） */
     commentModal: true,
@@ -254,6 +257,27 @@ ${CONFIG.zhihuLayout ? `
 .z-actions .z-act.z-static:hover { color: inherit !important; }
 .z-act.z-busy { opacity: .55; pointer-events: none; }
 
+/* ===== 质量指标：赞播比 / 评论率 / 互动率 … 扫一眼就知道值不值得点 ===== */
+.z-quality {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px;
+  margin-top: 10px; font-size: 12px; line-height: 20px;
+}
+.z-quality:empty { display: none !important; }
+.z-quality .z-label { margin-right: 2px; }
+.z-quality .z-metric {
+  display: inline-flex; align-items: baseline; gap: 4px;
+  padding: 0 7px; border-radius: 3px; white-space: nowrap;
+  background: #f4f6f8; cursor: help;
+}
+.z-quality .z-metric-k { color: #98a1ab; }
+.z-quality .z-metric-v { font-weight: 600; font-variant-numeric: tabular-nums; color: #5a6472; }
+/* 高于参考区间 / 落在参考区间 / 低于参考区间，只做温和提示，不是判卷 */
+.z-quality .z-m-good { background: #ebf5ee; }
+.z-quality .z-m-good .z-metric-v { color: #2c9a58; }
+.z-quality .z-m-low { background: #fdf4e9; }
+.z-quality .z-m-low .z-metric-v { color: #bf7a2c; }
+.z-quality .z-m-na .z-metric-v { color: #b9c0c8; }
+
 /* 轻提示：点赞成功 / 未登录 / 风控 */
 .z-toast {
   position: fixed; left: 50%; bottom: calc(78px + env(safe-area-inset-bottom, 0px));
@@ -439,7 +463,7 @@ ${CONFIG.zhihuLayout ? `
   }
 
   /* ===================== 4. 缓存 ===================== */
-  const CACHE_KEY = 'zbili:desc:v4';
+  const CACHE_KEY = 'zbili:desc:v5';
   const TTL = 7 * 24 * 3600 * 1000;
   const SUB_KEY = 'zbili:sub:v2';
   const SUB_TTL = 3 * 24 * 3600 * 1000;
@@ -574,7 +598,13 @@ ${CONFIG.zhihuLayout ? `
     const rec = {
       d: desc,
       tg: tags,
-      s: { like: st.like || 0, reply: st.reply || 0, fav: st.favorite || 0 },
+      s: {
+        view: st.view || 0,
+        like: st.like || 0,
+        reply: st.reply || 0,
+        fav: st.favorite || 0,
+        share: st.share || 0,
+      },
       aid: d.aid || 0,
       cid: d.cid || (d.pages && d.pages[0] && d.pages[0].cid) || 0,
       t: Date.now(),
@@ -1110,6 +1140,91 @@ ${CONFIG.zhihuLayout ? `
     acts.style.display = '';
   }
 
+  /**
+   * 质量指标：都是「比值」，回答的是「这个视频值不值得点」。
+   * 参考区间来自运营侧常见经验值，只做温和着色（高/正常/低），不判卷。
+   */
+  const pctText = (v) => {
+    if (!isFinite(v) || v < 0) return '—';
+    const p = v * 100;
+    if (p === 0) return '0%';
+    if (p < 0.1) return '<0.1%';
+    return p.toFixed(1) + '%';
+  };
+  const ratioText = (v) => (isFinite(v) && v >= 0 ? v.toFixed(2) : '—');
+  /** v ≥ good → good；≥ low → ok；否则 low（NaN → na） */
+  const grade = (v, low, good) => (!isFinite(v) ? 'na' : v >= good ? 'good' : v >= low ? 'ok' : 'low');
+
+  function qualityItems(st) {
+    const view = Number(st.view) || 0;
+    const like = Number(st.like) || 0;
+    const reply = Number(st.reply) || 0;
+    const fav = Number(st.fav) || 0;
+    const share = Number(st.share) || 0;
+    const r = (a, b) => (b > 0 ? a / b : NaN);
+    const likeRate = r(like, view);
+    const replyRate = r(reply, view);
+    const favRate = r(fav, view);
+    const shareRate = r(share, view);
+    const interRate = r(like + reply + fav + share, view);
+    const replyLike = r(reply, like);
+    const favLike = r(fav, like);
+    const shareLike = r(share, like);
+    const rational = r(fav + share, like);
+    return [
+      { k: '赞播比', v: pctText(likeRate), lv: grade(likeRate, 0.03, 0.07),
+        tip: '赞播比 = 点赞 / 播放\n参考 3%~5%，7%+ 优秀\n诊断：内容“讨喜度”' },
+      { k: '评论率', v: pctText(replyRate), lv: grade(replyRate, 0.005, 0.015),
+        tip: '评论率 = 评论 / 播放\n参考 0.5%~1.5%\n诊断：话题性' },
+      { k: '收藏率', v: pctText(favRate), lv: grade(favRate, 0.005, 0.03),
+        tip: '收藏率 = 收藏 / 播放\n干货 >3%，娱乐 <0.5%\n诊断：“以后要用”' },
+      { k: '转发率', v: pctText(shareRate), lv: grade(shareRate, 0.003, 0.008),
+        tip: '转发率 = 转发 / 播放\n参考 0.3%~0.8%\n诊断：社交货币强度' },
+      { k: '互动率', v: pctText(interRate), lv: grade(interRate, 0.03, 0.05),
+        tip: '互动率 =（赞+评+藏+转）/ 播放\n3% 及格，5% 好\n诊断：算法主看这个' },
+      { k: '评赞比', v: ratioText(replyLike), lv: grade(replyLike, 0.1, 0.2),
+        tip: '评赞比 = 评论 / 点赞\n参考 0.1~0.2\n诊断：有没有话可说' },
+      { k: '藏赞比', v: ratioText(favLike), lv: grade(favLike, 0.1, 0.3),
+        tip: '藏赞比 = 收藏 / 点赞\n干货 >0.3，娱乐 <0.1\n诊断：“有用” vs “好看”' },
+      { k: '转赞比', v: ratioText(shareLike), lv: grade(shareLike, 0.1, 0.3),
+        tip: '转赞比 = 转发 / 点赞\n参考 0.1~0.3，越高越好\n诊断：“值得代表我”' },
+      { k: '理性认可率', v: ratioText(rational), lv: grade(rational, 0.2, 0.3),
+        tip: '理性认可率 =（收藏+转发）/ 点赞\n>0.3 算高\n诊断：愿付出行动成本的比例' },
+    ];
+  }
+
+  /** 质量指标行：数据到了才显示，播放量为 0（接口没给）/ 开关关闭就整行藏起来 */
+  function fillQuality(card, stat) {
+    const row = card.querySelector('.z-quality');
+    if (!row) return;
+    row.textContent = '';
+    row.removeAttribute('title');
+    const view = Number(stat && stat.view) || 0;
+    if (!CONFIG.showQuality || !view) {
+      row.style.display = 'none';
+      return;
+    }
+
+    const raw = '播放 ' + fmtNum(view) + ' · 赞 ' + fmtNum(stat.like) + ' · 评 ' + fmtNum(stat.reply)
+      + ' · 藏 ' + fmtNum(stat.fav) + ' · 转 ' + fmtNum(stat.share);
+    row.appendChild(el('span', 'z-label', '数据'));
+    qualityItems(stat).forEach((it) => {
+      const chip = el('span', 'z-metric z-m-' + it.lv);
+      chip.appendChild(el('span', 'z-metric-k', it.k));
+      chip.appendChild(el('span', 'z-metric-v', it.v));
+      chip.title = it.tip + '\n\n' + raw;
+      row.appendChild(chip);
+    });
+    // 播放量太少时比值噪声很大，给个明确提示，而不是让用户信以为真
+    if (view < 1000) {
+      const warn = el('span', 'z-metric z-m-na');
+      warn.appendChild(el('span', 'z-metric-k', '样本小'));
+      warn.title = '播放量不到 1000，各项比值波动很大，随便看看就好';
+      row.appendChild(warn);
+    }
+    row.style.display = '';
+  }
+
   /** 数字 = 服务器给的统计值 + 本地操作带来的增量 */
   function renderActNum(a) {
     const node = a.querySelector('.z-act-num');
@@ -1192,6 +1307,7 @@ ${CONFIG.zhihuLayout ? `
         descEl.classList.add('z-hint');
         if (moreEl) moreEl.style.display = 'none';
         fillActions(card, null);
+        fillQuality(card, null);
         return;
       }
 
@@ -1234,6 +1350,7 @@ ${CONFIG.zhihuLayout ? `
       }
 
       fillActions(card, rec.s);
+      fillQuality(card, rec.s);
     });
   }
 
@@ -1297,6 +1414,11 @@ ${CONFIG.zhihuLayout ? `
 
     tit.insertAdjacentElement('afterend', box);
     if (CONFIG.showActions) box.appendChild(buildActions(link ? link.href : href, bvid, tit.textContent));
+    if (CONFIG.showQuality) {
+      const quality = el('div', 'z-quality');
+      quality.style.display = 'none'; // 统计值到了再显示
+      box.appendChild(quality);
+    }
     card.dataset.zbBvid = bvid;
     card.dataset.zbState = 'ok';
 
