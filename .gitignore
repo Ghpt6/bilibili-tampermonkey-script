@@ -10,3 +10,4 @@ desktop.ini
 *.tmp
 *.bak
 node_modules/
+.playwright-mcp/

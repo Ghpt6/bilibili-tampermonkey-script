@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         哔哩哔哩 - 移除首页视频封面图
 // @namespace    https://www.bilibili.com/
-// @version      2.2.0
-// @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，正文=视频简介（点「阅读全文」就地展开）
+// @version      2.3.0
+// @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，正文=视频简介（点「阅读全文」就地展开），卡片间保留分割线
 // @author       you
 // @match        https://www.bilibili.com/*
 // @match        https://www.bilibili.com
@@ -41,6 +41,9 @@
 
     /** 是否隐藏首页的「分区楼层卡」（直播 / 番剧那些小卡片） */
     hideFloorCards: true,
+
+    /** 是否隐藏信息流里的直播卡（没有简介，改造成知乎样式会留下大片空白） */
+    hideLiveCards: true,
 
     /** 是否顺带隐藏顶部站点 Banner 插画 */
     hideHeaderBanner: false,
@@ -87,6 +90,10 @@ ${CONFIG.hideFloorCards ? `
 }
 ` : ''}
 
+${CONFIG.hideLiveCards ? `
+.bili-feed4 .bili-live-card { display: none !important; }
+` : ''}
+
 ${CONFIG.hideHeaderBanner ? `
 .bili-header__banner .animated-banner,
 .bili-header__banner .banner-img { display: none !important; }
@@ -112,6 +119,11 @@ ${CONFIG.zhihuLayout ? `
   border-radius: 2px !important;
   overflow: hidden !important;
 }
+/* B站给卡片外层（.feed-card / 广告位）留了 24~40px 的大间距，单列流里拉平 */
+.bili-feed4 .container.is-version8 > * {
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+}
 
 /* 每张卡片 = 一条知乎式的回答 */
 .bili-feed4 .bili-video-card {
@@ -127,7 +139,12 @@ ${CONFIG.zhihuLayout ? `
   box-shadow: none !important;
   --cover-radio: 0% !important;
 }
-.bili-feed4 .bili-video-card:last-child { border-bottom: none !important; }
+/* 卡片外层还套了一层 .feed-card，所以每张卡都是自己父节点的 :last-child，
+   不能直接用 .bili-video-card:last-child 判断，否则所有分割线都会被吃掉 */
+.bili-feed4 .container.is-version8 > :last-child .bili-video-card,
+.bili-feed4 .container.is-version8 > .bili-video-card:last-child { border-bottom: none !important; }
+/* 不是普通投稿的卡片（番剧 / 活动 / 广告等），封面已隐藏，直接不显示 */
+.bili-feed4 .bili-video-card.z-skip { display: none !important; }
 .bili-feed4 .bili-video-card__wrap { display: block !important; }
 .bili-feed4 .bili-video-card__info { padding: 0 !important; margin: 0 !important; display: block !important; }
 .bili-feed4 .bili-video-card__info--right { display: block !important; }
@@ -434,8 +451,13 @@ ${CONFIG.zhihuLayout ? `
     const link = tit.querySelector('a');
     const href = link ? link.href : '';
     const m = href.match(/\/video\/(BV[0-9A-Za-z]{10})/);
-    if (!m) return; // 番剧 / 直播 / 广告卡不动
+    if (!m) {
+      // 番剧 / 活动 / 广告卡：封面已经隐藏，留着只会剩一块空白，直接跳过
+      card.classList.add('z-skip');
+      return;
+    }
     const bvid = m[1];
+    card.classList.remove('z-skip');
 
     const authorEl = card.querySelector('.bili-video-card__info--author');
     const ownerEl = card.querySelector('.bili-video-card__info--owner');
