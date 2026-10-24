@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         哔哩哔哩 - 移除首页视频封面图
 // @namespace    https://www.bilibili.com/
-// @version      2.18.0
+// @version      2.18.1
 // @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，「简介」「字幕」各带徽章（点「阅读全文」/「展开字幕」就地展开，字幕展开后右下角悬浮「收起字幕」，不用滚到末尾），字幕按原生时间轴一条一行并标出时间点（点时间点直接跳到视频该处），点「评论」弹窗里直接渲染评论（热门/最新、点赞数、表情、子回复），无简介 / 无字幕会提示，底部「点赞」点了就地给视频点赞（再点取消）/「评论」弹窗看评论 /「收藏」只显示数字不可点，另加一块质量指标仪表盘（互动率环形 + 五维雷达 + 赞播比/评论率/收藏率/转发率/互动率/评赞比/藏赞比/转赞比/理性认可率 9 张轨道卡），可一键收成一行 chips
 // @author       you
 // @match        https://www.bilibili.com/*
@@ -1317,12 +1317,32 @@ ${CONFIG.zhihuLayout ? `
   const QVIEW_KEY = 'zbili:qview';
   let qView = 'chart';
   try { if (localStorage.getItem(QVIEW_KEY) === 'mini') qView = 'mini'; } catch (e) { /* 隐私模式 */ }
-  function setQView(v) {
+
+  /**
+   * 切换视图：所有卡片的图表块会一起胀缩（一卡 ±400px），
+   * 它们上方的卡一变，下面整片内容就跟着上下跑 → 以「被点的那张卡」为锚点拉回来。
+   * 同时关掉浏览器的 scroll anchoring，否则它和我们各补一次，卡片会飞过头。
+   */
+  function setQView(v, from) {
+    const card = from && from.closest ? from.closest('.bili-video-card') : null;
+    const beforeTop = card ? card.getBoundingClientRect().top : 0;
+    const y0 = window.scrollY;
+    const root = document.documentElement;
+    const prevAnchor = root.style.overflowAnchor;
+    root.style.overflowAnchor = 'none';
+
     qView = v;
     try { localStorage.setItem(QVIEW_KEY, v); } catch (e) { /* 存不了就算了 */ }
-    document.querySelectorAll('.z-quality').forEach((box) => {
-      if (box._stat) renderQuality(box, box._stat);
+    document.querySelectorAll('.z-quality').forEach((node) => {
+      if (node._stat) renderQuality(node, node._stat);
     });
+
+    root.style.overflowAnchor = prevAnchor;
+    if (card && card.isConnected) {
+      const dy = card.getBoundingClientRect().top - beforeTop;
+      // 瞬移：高度刚变，平滑动画会被逐帧的重排拉偏
+      if (Math.abs(dy) >= 1) window.scrollTo(0, Math.max(0, y0 + dy));
+    }
   }
 
   /** 卡片里的一块「数据」：结论条 + 雷达 + 9 张轨道卡 */
@@ -1374,7 +1394,10 @@ ${CONFIG.zhihuLayout ? `
     const toggle = makeMore(qView === 'mini' ? '图表' : '收起图表');
     toggle.classList.add('z-q-toggle');
     if (qView !== 'mini') toggle.classList.add('z-open');
-    const flip = (ev) => { if (ev) { ev.preventDefault(); ev.stopPropagation(); } setQView(qView === 'mini' ? 'chart' : 'mini'); };
+    const flip = (ev) => {
+      if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+      setQView(qView === 'mini' ? 'chart' : 'mini', box);
+    };
     toggle.addEventListener('click', flip);
     toggle.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') flip(ev); });
     head.appendChild(toggle);
