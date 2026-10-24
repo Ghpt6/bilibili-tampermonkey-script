@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         哔哩哔哩 - 移除首页视频封面图
 // @namespace    https://www.bilibili.com/
-// @version      2.18.1
+// @version      2.19.1
 // @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，「简介」「字幕」各带徽章（点「阅读全文」/「展开字幕」就地展开，字幕展开后右下角悬浮「收起字幕」，不用滚到末尾），字幕按原生时间轴一条一行并标出时间点（点时间点直接跳到视频该处），点「评论」弹窗里直接渲染评论（热门/最新、点赞数、表情、子回复），无简介 / 无字幕会提示，底部「点赞」点了就地给视频点赞（再点取消）/「评论」弹窗看评论 /「收藏」只显示数字不可点，另加一块质量指标仪表盘（互动率环形 + 五维雷达 + 赞播比/评论率/收藏率/转发率/互动率/评赞比/藏赞比/转赞比/理性认可率 9 张轨道卡），可一键收成一行 chips
 // @author       you
 // @match        https://www.bilibili.com/*
@@ -564,6 +564,8 @@ ${CONFIG.zhihuLayout ? `
   let subCache = loadJSON(SUB_KEY);
   // v1 存的是 60 字合并后的长文本（无时间轴），已不再使用且体积很大
   try { localStorage.removeItem('zbili:sub:v1'); } catch (e) { /* 忽略 */ }
+  // 2.19 之前「图表 / 紧凑」是全局偏好，现在改成每张卡自己切，旧键清掉
+  try { localStorage.removeItem('zbili:qview'); } catch (e) { /* 忽略 */ }
   let cacheDirty = false;
   let subDirty = false;
 
@@ -1314,35 +1316,27 @@ ${CONFIG.zhihuLayout ? `
   }
 
   /* 图表 / 紧凑两种视图，用户点了就全局记住（每张卡都跟着变） */
-  const QVIEW_KEY = 'zbili:qview';
-  let qView = 'chart';
-  try { if (localStorage.getItem(QVIEW_KEY) === 'mini') qView = 'mini'; } catch (e) { /* 隐私模式 */ }
-
   /**
-   * 切换视图：所有卡片的图表块会一起胀缩（一卡 ±400px），
-   * 它们上方的卡一变，下面整片内容就跟着上下跑 → 以「被点的那张卡」为锚点拉回来。
-   * 同时关掉浏览器的 scroll anchoring，否则它和我们各补一次，卡片会飞过头。
+   * 图表默认只在页面第一张卡上展开，其余卡默认折成一行 chips（刷新后不会满屏都是图）。
+   * 「第一张」= DOM 里第一张**已改造**的卡（前面的骨架位 / 番剧广告卡都不算）。
+   * 每张卡自己记 _open，点「图表 / 收起图表」只动这一张。
    */
-  function setQView(v, from) {
-    const card = from && from.closest ? from.closest('.bili-video-card') : null;
-    const beforeTop = card ? card.getBoundingClientRect().top : 0;
-    const y0 = window.scrollY;
-    const root = document.documentElement;
-    const prevAnchor = root.style.overflowAnchor;
-    root.style.overflowAnchor = 'none';
-
-    qView = v;
-    try { localStorage.setItem(QVIEW_KEY, v); } catch (e) { /* 存不了就算了 */ }
-    document.querySelectorAll('.z-quality').forEach((node) => {
-      if (node._stat) renderQuality(node, node._stat);
-    });
-
-    root.style.overflowAnchor = prevAnchor;
-    if (card && card.isConnected) {
-      const dy = card.getBoundingClientRect().top - beforeTop;
-      // 瞬移：高度刚变，平滑动画会被逐帧的重排拉偏
-      if (Math.abs(dy) >= 1) window.scrollTo(0, Math.max(0, y0 + dy));
+  function isFirstCard(card) {
+    const all = document.querySelectorAll('.bili-video-card');
+    for (let i = 0; i < all.length; i += 1) {
+      const c = all[i];
+      if (c.classList.contains('z-skip')) continue;      // 番剧 / 广告 / 直播卡
+      if (c.dataset.zbState !== 'ok') continue;          // 骨架占位、还没改造的卡
+      return c === card;
     }
+    return false;
+  }
+
+  /** 只切当前这张卡（其他卡不动，滚动位置也不用管：head 与卡片顶部本来就不会移） */
+  function toggleQuality(box) {
+    if (!box || !box._stat) return;
+    box._open = !box._open;
+    renderQuality(box, box._stat);
   }
 
   /** 卡片里的一块「数据」：结论条 + 雷达 + 9 张轨道卡 */
@@ -1359,6 +1353,17 @@ ${CONFIG.zhihuLayout ? `
     box.style.display = '';
     box._stat = stat;
     box._metrics = qualityMetrics(stat);
+    if (box._open === undefined) {
+      box._open = isFirstCard(card);
+      if (box._open) {
+        // 前面某张卡可能先拿到数据而临时展开过，收起来 —— 保证「只有第一张展开」
+        document.querySelectorAll('.z-quality').forEach((other) => {
+          if (other === box || !other._open) return;
+          other._open = false;
+          if (other._stat) renderQuality(other, other._stat);
+        });
+      }
+    }
     renderQuality(box, stat);
   }
 
@@ -1391,12 +1396,12 @@ ${CONFIG.zhihuLayout ? `
       head.appendChild(note);
     }
 
-    const toggle = makeMore(qView === 'mini' ? '图表' : '收起图表');
+    const toggle = makeMore(box._open ? '收起图表' : '图表');
     toggle.classList.add('z-q-toggle');
-    if (qView !== 'mini') toggle.classList.add('z-open');
+    if (box._open) toggle.classList.add('z-open');
     const flip = (ev) => {
       if (ev) { ev.preventDefault(); ev.stopPropagation(); }
-      setQView(qView === 'mini' ? 'chart' : 'mini', box);
+      toggleQuality(box);
     };
     toggle.addEventListener('click', flip);
     toggle.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') flip(ev); });
@@ -1404,7 +1409,7 @@ ${CONFIG.zhihuLayout ? `
     box.appendChild(head);
 
     /* 紧凑视图：就是原来那行 chip */
-    if (qView === 'mini') {
+    if (!box._open) {
       const raw = '播放 ' + fmtNum(stat.view) + ' · 赞 ' + fmtNum(stat.like) + ' · 评 ' + fmtNum(stat.reply)
         + ' · 藏 ' + fmtNum(stat.fav) + ' · 转 ' + fmtNum(stat.share);
       list.forEach((m) => {
