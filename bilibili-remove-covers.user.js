@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         哔哩哔哩 - 移除首页视频封面图
 // @namespace    https://www.bilibili.com/
-// @version      2.5.0
-// @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，正文=视频简介 + 字幕文稿（点「阅读全文」就地展开），底部点赞 / 评论 / 收藏
+// @version      2.6.0
+// @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，「简介」「字幕」各带徽章（点「阅读全文」/「展开字幕」就地展开），无简介 / 无字幕会提示，底部点赞 / 评论 / 收藏
 // @author       you
 // @match        https://www.bilibili.com/*
 // @match        https://www.bilibili.com
@@ -44,9 +44,9 @@
     tagsAsFallback: true,
 
     /** 字幕（视频文稿）用法：
-     *  'always' = 简介后面总是追加字幕内容（没有简介时字幕直接当正文）
-     *  'noDesc' = 只有没有简介时才用字幕顶替（更省流量）
-     *  'off'    = 完全不抓字幕
+     *  'always' = 简介下面总是追加一块「字幕」（没有简介时字幕就是卡片的主要内容）
+     *  'noDesc' = 只有没有简介时才抓字幕（更省流量，有简介的卡片不显示字幕块）
+     *  'off'    = 完全不抓字幕（也不显示字幕提示）
      */
     subtitleMode: 'always',
 
@@ -189,19 +189,34 @@ ${CONFIG.zhihuLayout ? `
 }
 .bili-feed4 .bili-video-card:hover .bili-video-card__info--tit a { color: #175199 !important; }
 
-/* 正文：UP主：简介 … 阅读全文 */
+/* 正文：UP主： + 「简介」块 + 「字幕」块 */
 .z-answer {
   font-size: 15px !important;
   line-height: 1.75 !important;
   color: #4a4a4a !important;
   word-break: break-word;
 }
+.z-answer .z-byline { margin-bottom: 2px; }
 .z-answer .z-author { color: #121212 !important; font-weight: 600 !important; text-decoration: none !important; }
 .z-answer .z-author:hover { color: #175199 !important; }
 .z-answer .z-colon { color: #121212 !important; }
+/* 「简介」「字幕」小徽章，标在每块内容前面 */
+.z-answer .z-label {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 5px;
+  border-radius: 2px;
+  background: #eef2f6;
+  color: #6b7a8c;
+  font-size: 12px;
+  line-height: 18px;
+  vertical-align: 1px;
+  white-space: nowrap;
+  user-select: none;
+}
+.z-answer .z-row { margin-top: 4px; }
 .z-answer .z-desc { color: #4a4a4a !important; }
 .z-answer .z-desc.z-pending { color: #b9c0c8 !important; }
-.z-answer .z-desc.z-empty { color: #9aa4af !important; font-style: italic; }
 .z-answer .z-desc.z-tags { color: #6b7a8c !important; }
 .z-answer .z-more {
   display: inline-flex;
@@ -231,26 +246,17 @@ ${CONFIG.zhihuLayout ? `
 /* 字幕（视频文稿） */
 .z-answer .z-sub-slot:empty { display: none !important; }
 .z-answer .z-sub {
-  margin-top: 10px;
+  margin-top: 8px;
   padding-top: 10px;
   border-top: 1px dashed #e9edf1;
   font-size: 14.5px;
-  line-height: 1.75;
+  line-height: 1.8;
   color: #4a4a4a;
 }
-.z-answer .z-sub-label {
-  display: inline-block;
-  margin-right: 6px;
-  padding: 0 5px;
-  border-radius: 2px;
-  background: #eef2f6;
-  color: #6b7a8c;
-  font-size: 12px;
-  line-height: 18px;
-  vertical-align: 1px;
-  user-select: none;
-}
 .z-answer .z-sub-text { color: #4a4a4a !important; }
+/* 「暂无字幕」「该 UP 主没有填写简介」这类提示 */
+.z-answer .z-desc.z-hint,
+.z-answer .z-sub-text.z-hint { color: #9aa4af !important; font-style: italic; }
 .z-answer .z-sub-panel {
   margin-top: 8px;
   padding: 10px 12px;
@@ -755,24 +761,32 @@ ${CONFIG.zhihuLayout ? `
     return more;
   }
 
-  /** 有简介时：在简介下面接一块「字幕：…」 */
-  function buildSubBlock(slot, text) {
-    if (!slot || slot.querySelector('.z-sub')) return;
-    const wrap = document.createElement('div');
-    wrap.className = 'z-sub';
-
+  function makeLabel(text) {
     const label = document.createElement('span');
-    label.className = 'z-sub-label';
-    label.textContent = '字幕';
+    label.className = 'z-label';
+    label.textContent = text;
+    return label;
+  }
 
+  function setLabel(el, text) {
+    if (el && el.textContent !== text) el.textContent = text;
+  }
+
+  /** 有字幕：接一块「字幕 预览… 展开字幕」，有简介时预览短一点 */
+  function buildSubBlock(slot, text, hasDesc) {
+    if (!slot) return;
+    slot.textContent = '';
+    const wrap = document.createElement('div');
+    wrap.className = 'z-sub z-row';
+    wrap.appendChild(makeLabel('字幕'));
+
+    const limit = hasDesc ? CONFIG.subtitleMaxChars : CONFIG.descMaxChars;
     const preview = document.createElement('span');
     preview.className = 'z-sub-text';
-    preview.textContent = clip(text, CONFIG.subtitleMaxChars);
-
-    wrap.appendChild(label);
+    preview.textContent = clip(text, limit);
     wrap.appendChild(preview);
 
-    if (oneLine(text).length > CONFIG.subtitleMaxChars) {
+    if (oneLine(text).length > limit) {
       const more = makeSubMore();
       wrap.appendChild(more);
       bindPanelToggle(slot, more, text);
@@ -780,25 +794,20 @@ ${CONFIG.zhihuLayout ? `
     slot.appendChild(wrap);
   }
 
-  /** 没有简介时：字幕直接当正文（预览跟在 UP主： 后面） */
-  function subtitleAsBody(box, descEl, moreEl, slot, text) {
-    const preview = clip(text, CONFIG.subtitleMaxChars);
-    descEl.textContent = preview;
-    descEl.dataset.preview = preview;
-    descEl.classList.add('z-sub-body');
+  /** 没字幕：也给一个提示，别让用户以为脚本没生效 */
+  function buildSubEmpty(slot) {
+    if (!slot) return;
+    slot.textContent = '';
+    const wrap = document.createElement('div');
+    wrap.className = 'z-sub z-row';
+    wrap.appendChild(makeLabel('字幕'));
 
-    const label = document.createElement('span');
-    label.className = 'z-sub-label';
-    label.textContent = '字幕';
-    box.insertBefore(label, descEl);
-
-    if (oneLine(text).length > CONFIG.subtitleMaxChars && moreEl) {
-      moreEl.style.display = '';
-      setMoreLabel(moreEl, '展开字幕');
-      bindPanelToggle(slot, moreEl, text);
-    } else if (moreEl) {
-      moreEl.style.display = 'none';
-    }
+    const hint = document.createElement('span');
+    hint.className = 'z-sub-text z-hint';
+    hint.textContent = '暂无字幕';
+    hint.title = '该视频没有文稿字幕；AI 字幕需要登录 B 站后才会返回';
+    wrap.appendChild(hint);
+    slot.appendChild(wrap);
   }
 
   function bindExpand(descEl, moreEl, fullText) {
@@ -841,17 +850,30 @@ ${CONFIG.zhihuLayout ? `
     if (!bvid || !box) return;
     const descEl = box.querySelector('.z-desc');
     const moreEl = box.querySelector('.z-more');
+    const slot = box.querySelector('.z-sub-slot');
     if (!descEl) return;
 
     requestDesc(bvid).then((rec) => {
       if (!descEl.isConnected) return;
       descEl.classList.remove('z-pending');
-      const full = rec && typeof rec === 'object' ? (rec.d || '') : (rec || '');
-      const tags = (rec && rec.tg) || [];
-      const sub = (rec && rec.sub) || '';
-      const slot = box.querySelector('.z-sub-slot');
+      const descLabel = box.querySelector('.z-desc-label');
+
+      // 接口挂了 / 被风控：别误报「该 UP 主没有填写简介」
+      if (!rec || typeof rec !== 'object') {
+        setLabel(descLabel, '简介');
+        descEl.textContent = '简介加载失败，稍后刷新重试';
+        descEl.classList.add('z-hint');
+        if (moreEl) moreEl.style.display = 'none';
+        fillActions(card, null);
+        return;
+      }
+
+      const full = rec.d || '';
+      const tags = rec.tg || [];
+      const sub = rec.sub || '';
 
       if (full) {
+        setLabel(descLabel, '简介');
         const preview = clip(full, CONFIG.descMaxChars);
         descEl.textContent = preview;
         descEl.dataset.preview = preview;
@@ -866,22 +888,26 @@ ${CONFIG.zhihuLayout ? `
         } else if (moreEl) {
           moreEl.style.display = 'none';
         }
-        // 简介后面接字幕内容
-        if (sub && CONFIG.subtitleMode !== 'off') buildSubBlock(slot, sub);
-      } else if (sub && CONFIG.subtitleMode !== 'off') {
-        // 没有简介 → 字幕直接顶替正文
-        subtitleAsBody(box, descEl, moreEl, slot, sub);
       } else if (tags.length) {
-        descEl.textContent = '标签：' + tags.join(' · ');
+        setLabel(descLabel, '标签');
+        descEl.textContent = tags.join(' · ');
         descEl.classList.add('z-tags');
         if (moreEl) moreEl.style.display = 'none';
       } else {
+        // 简介 / 动态 / 标签都没有 → 明确告诉用户
+        setLabel(descLabel, '简介');
         descEl.textContent = CONFIG.fallbackDesc;
-        descEl.classList.add('z-empty');
+        descEl.classList.add('z-hint');
         if (moreEl) moreEl.style.display = 'none';
       }
 
-      fillActions(card, rec && rec.s);
+      // 字幕：抓到就显示预览 +「展开字幕」，抓不到也给一个提示
+      if (subtitleNeeded(full)) {
+        if (sub) buildSubBlock(slot, sub, !!full);
+        else buildSubEmpty(slot);
+      }
+
+      fillActions(card, rec.s);
     });
   }
 
@@ -914,21 +940,35 @@ ${CONFIG.zhihuLayout ? `
     const box = document.createElement('div');
     box.className = 'z-answer';
 
+    // 第一行：UP主：
+    const byline = document.createElement('div');
+    byline.className = 'z-byline';
+
     const authorA = document.createElement('a');
     authorA.className = 'z-author';
     authorA.textContent = author;
     if (ownerEl && ownerEl.href) { authorA.href = ownerEl.href; authorA.target = '_blank'; }
-    box.appendChild(authorA);
+    byline.appendChild(authorA);
 
     const colon = document.createElement('span');
     colon.className = 'z-colon';
     colon.textContent = '：';
-    box.appendChild(colon);
+    byline.appendChild(colon);
+    box.appendChild(byline);
+
+    // 第二块：简介（和字幕一样带一个小徽章）
+    const descRow = document.createElement('div');
+    descRow.className = 'z-row z-desc-row';
+
+    const descLabel = document.createElement('span');
+    descLabel.className = 'z-label z-desc-label';
+    descLabel.textContent = '简介';
+    descRow.appendChild(descLabel);
 
     const descEl = document.createElement('span');
     descEl.className = 'z-desc z-pending';
     descEl.textContent = '简介加载中…';
-    box.appendChild(descEl);
+    descRow.appendChild(descEl);
 
     const moreEl = document.createElement('span');
     moreEl.className = 'z-more';
@@ -936,9 +976,10 @@ ${CONFIG.zhihuLayout ? `
     moreEl.tabIndex = 0;
     moreEl.style.display = 'none'; // 默认不显示，只有简介被截断时才出现
     moreEl.innerHTML = '<span class="z-more-text">阅读全文</span>' + CHEV;
-    box.appendChild(moreEl);
+    descRow.appendChild(moreEl);
+    box.appendChild(descRow);
 
-    // 字幕面板的容器（跟在正文后面、meta 前面）
+    // 字幕块的容器（跟在简介后面、meta 前面）
     const slot = document.createElement('div');
     slot.className = 'z-sub-slot';
     box.appendChild(slot);
