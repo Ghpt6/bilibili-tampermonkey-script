@@ -18,6 +18,25 @@
 | --- | --- |
 | `bilibili-remove-covers.user.js` | 脚本本体（唯一需要维护的文件） |
 
+## 代码结构
+
+单个文件，一个 IIFE，从上往下读就是一条完整链路；顶部有目录注释，每个模块前都有 `/* ===== N. 模块 ===== */` 分隔条：
+
+| 模块 | 行数 | 内容 |
+| --- | --- | --- |
+| 1. 配置 | ~65 | `CONFIG` 所有开关 |
+| 2. CSS | ~210 | 一张 `<style data-bili-no-cover>`：封面隐藏 / 单列布局 / 卡片正文 / 字幕 / 操作栏 / 评论弹窗 |
+| 3. 工具 | ~70 | `el()` 建节点、`cleanText` / `rawClean` / `oneLine` / `meaningful` / `clip`、`fmtNum` / `fmtTime` / `cmtWhen`、`escapeHtml` / `fixUrl` |
+| 4. 缓存 | ~40 | `localStorage` 读写 + 按时间淘汰（简介 `zbili:desc:v4`、字幕 `zbili:sub:v2`） |
+| 5. 网络 | ~45 | 接口常量、`fetchJSON`、并发 2 的队列、`blockApi()` 风控退避 |
+| 6. 简介 | ~45 | `view` 接口 → 简介 / 动态 / 标签 / 播放·评论·收藏数 |
+| 7. 字幕 | ~210 | WBI 签名（`md5` + `mixinKey`）→ `player/wbi/v2` → 字幕 JSON → `[[秒, 正文], ...]` |
+| 8. 卡片 | ~310 | 操作栏、字幕块、`阅读全文`、`loadDesc()`、`enhance()` |
+| 9. 评论 | ~330 | `/x/v2/reply` 分页渲染、子回复、弹窗开关 |
+| 10. 启动 | ~50 | `IntersectionObserver` 懒加载 + `MutationObserver` 增量扫描 |
+
+改样式只动模块 2，改文案 / 逻辑基本只需看模块 8、9。
+
 ## 配置
 
 改脚本顶部 `CONFIG`，保存后刷新页面生效：
