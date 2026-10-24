@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         哔哩哔哩 - 移除首页视频封面图
 // @namespace    https://www.bilibili.com/
-// @version      2.6.0
-// @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，「简介」「字幕」各带徽章（点「阅读全文」/「展开字幕」就地展开），无简介 / 无字幕会提示，底部点赞 / 评论 / 收藏
+// @version      2.7.0
+// @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，「简介」「字幕」各带徽章（点「阅读全文」/「展开字幕」就地展开），字幕一段一行、展开后就地续排，无简介 / 无字幕会提示，底部点赞 / 评论 / 收藏
 // @author       you
 // @match        https://www.bilibili.com/*
 // @match        https://www.bilibili.com
@@ -50,11 +50,8 @@
      */
     subtitleMode: 'always',
 
-    /** 字幕预览多少个字，超出才出现「展开字幕」 */
-    subtitleMaxChars: 160,
-
-    /** 展开后字幕面板的最大高度（px），超出内部滚动 */
-    subtitlePanelHeight: 360,
+    /** 字幕预览几行（字幕按段落一行一行排），剩下的点「展开字幕」接着往下排 */
+    subtitlePreviewLines: 3,
 
     /** 是否隐藏首页的「分区楼层卡」（直播 / 番剧那些小卡片） */
     hideFloorCards: true,
@@ -253,25 +250,10 @@ ${CONFIG.zhihuLayout ? `
   line-height: 1.8;
   color: #4a4a4a;
 }
-.z-answer .z-sub-text { color: #4a4a4a !important; }
+.z-answer .z-sub-text { color: #4a4a4a !important; white-space: pre-line; }
 /* 「暂无字幕」「该 UP 主没有填写简介」这类提示 */
 .z-answer .z-desc.z-hint,
 .z-answer .z-sub-text.z-hint { color: #9aa4af !important; font-style: italic; }
-.z-answer .z-sub-panel {
-  margin-top: 8px;
-  padding: 10px 12px;
-  max-height: ${CONFIG.subtitlePanelHeight}px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  background: #fafbfc;
-  border: 1px solid #eef1f4;
-  border-radius: 3px;
-  white-space: pre-wrap;
-  font-size: 14px;
-  line-height: 1.9;
-  color: #4a4a4a;
-  scrollbar-width: thin;
-}
 
 /* 底部操作栏：点赞 / 评论 / 收藏（知乎式） */
 .z-actions {
@@ -723,35 +705,7 @@ ${CONFIG.zhihuLayout ? `
   const CHEV = '<svg class="z-chev" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">'
     + '<path d="M4 6.5L8 10.5L12 6.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
-  /* ---- 字幕块：预览 + 「展开字幕」+ 可滚动文稿面板 ---- */
-  function bindPanelToggle(slot, moreEl, fullText) {
-    if (!slot) return;
-    let panel = null;
-    const toggle = (ev) => {
-      if (ev) {
-        ev.preventDefault();
-        ev.stopPropagation();
-      }
-      if (panel) {
-        panel.remove();
-        panel = null;
-        moreEl.classList.remove('z-open');
-        setMoreLabel(moreEl, '展开字幕');
-        return;
-      }
-      panel = document.createElement('div');
-      panel.className = 'z-sub-panel';
-      panel.textContent = fullText;
-      slot.appendChild(panel);
-      moreEl.classList.add('z-open');
-      setMoreLabel(moreEl, '收起');
-    };
-    moreEl.addEventListener('click', toggle);
-    moreEl.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter' || ev.key === ' ') toggle(ev);
-    });
-  }
-
+  /* ---- 字幕块：一段一行，点「展开字幕」就地接着往下排 ---- */
   function makeSubMore() {
     const more = document.createElement('span');
     more.className = 'z-more z-sub-more';
@@ -772,24 +726,50 @@ ${CONFIG.zhihuLayout ? `
     if (el && el.textContent !== text) el.textContent = text;
   }
 
-  /** 有字幕：接一块「字幕 预览… 展开字幕」，有简介时预览短一点 */
-  function buildSubBlock(slot, text, hasDesc) {
+  /** 字幕块：字幕一段一行，先露前 N 行，点「展开字幕」从断的地方接着往下排 */
+  function buildSubBlock(slot, text) {
     if (!slot) return;
     slot.textContent = '';
     const wrap = document.createElement('div');
     wrap.className = 'z-sub z-row';
     wrap.appendChild(makeLabel('字幕'));
 
-    const limit = hasDesc ? CONFIG.subtitleMaxChars : CONFIG.descMaxChars;
-    const preview = document.createElement('span');
-    preview.className = 'z-sub-text';
-    preview.textContent = clip(text, limit);
-    wrap.appendChild(preview);
+    const lines = String(text || '').split('\n').map((s) => s.trim()).filter(Boolean);
+    if (!lines.length) return;
 
-    if (oneLine(text).length > limit) {
+    const maxLines = CONFIG.subtitlePreviewLines > 0 ? CONFIG.subtitlePreviewLines : lines.length;
+    const head = lines.slice(0, maxLines);
+    const rest = lines.slice(maxLines);
+
+    const body = document.createElement('span');
+    body.className = 'z-sub-text';
+    body.textContent = head.join('\n');
+    wrap.appendChild(body);
+
+    if (rest.length) {
       const more = makeSubMore();
       wrap.appendChild(more);
-      bindPanelToggle(slot, more, text);
+      const toggle = (ev) => {
+        if (ev) {
+          ev.preventDefault();
+          ev.stopPropagation();
+        }
+        if (more.classList.contains('z-open')) {
+          body.textContent = head.join('\n');
+          more.classList.remove('z-open');
+          setMoreLabel(more, '展开字幕');
+          return;
+        }
+        // 展开：把剩下的行接在后面，不另开面板、不滚区
+        body.textContent = head.concat(rest).join('\n');
+        more.classList.add('z-open');
+        if (CONFIG.allowCollapse) setMoreLabel(more, '收起');
+        else more.style.display = 'none';
+      };
+      more.addEventListener('click', toggle);
+      more.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') toggle(ev);
+      });
     }
     slot.appendChild(wrap);
   }
@@ -903,7 +883,7 @@ ${CONFIG.zhihuLayout ? `
 
       // 字幕：抓到就显示预览 +「展开字幕」，抓不到也给一个提示
       if (subtitleNeeded(full)) {
-        if (sub) buildSubBlock(slot, sub, !!full);
+        if (sub) buildSubBlock(slot, sub);
         else buildSubEmpty(slot);
       }
 
