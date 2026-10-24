@@ -1,6 +1,7 @@
 # 哔哩哔哩首页知乎风改造（油猴脚本）
-
 把 bilibili.com 首页的推荐流改造成「知乎信息流」样式：
+
+![preview](preview.png)
 
 - **标题** = 视频标题（18px 加粗，hover 变蓝）
 - **作者** = UP 主名称（可点进空间），单独一行 `UP主：xxx`
@@ -18,6 +19,12 @@
 | 文件 | 说明 |
 | --- | --- |
 | `bilibili-remove-covers.user.js` | 脚本本体（唯一需要维护的文件） |
+
+## 如何安装
+
+1. 装 [Tampermonkey](https://www.tampermonkey.net/)（Chrome / Edge 商店搜 Tampermonkey）
+2. 打开 https://raw.githubusercontent.com/Ghpt6/bilibili-tampermonkey-script/main/bilibili-remove-covers.user.js , Tampermonkey 会自动弹安装页，点「安装」。以后把 `@version` 改大再打开这个链接就是升级；装过一次后 Tampermonkey 也会按这个地址自动检查更新。
+
 
 ## 代码结构
 
