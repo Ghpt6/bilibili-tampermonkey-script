@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         哔哩哔哩 - 移除首页视频封面图
 // @namespace    https://www.bilibili.com/
-// @version      2.8.0
-// @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，「简介」「字幕」各带徽章（点「阅读全文」/「展开字幕」就地展开），字幕按原生时间轴一条一行并标出时间点（点时间点直接跳到视频该处），无简介 / 无字幕会提示，底部点赞 / 评论 / 收藏
+// @version      2.9.0
+// @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，「简介」「字幕」各带徽章（点「阅读全文」/「展开字幕」就地展开），字幕按原生时间轴一条一行并标出时间点（点时间点直接跳到视频该处），点「评论」弹窗里用 iframe 看评论区，无简介 / 无字幕会提示，底部点赞 / 评论 / 收藏
 // @author       you
 // @match        https://www.bilibili.com/*
 // @match        https://www.bilibili.com
@@ -33,6 +33,9 @@
 
     /** 是否在卡片底部显示「点赞 / 评论 / 收藏」操作栏（点击会打开视频页） */
     showActions: true,
+
+    /** 点「评论」时是在弹窗里用 iframe 看评论区（true），还是直接跳视频页（false） */
+    commentModal: true,
 
     /** 视频没有简介时显示的占位文字 */
     fallbackDesc: '（该 UP 主没有填写简介）',
@@ -318,6 +321,96 @@ ${CONFIG.zhihuLayout ? `
 .z-actions .z-act:hover { color: #175199 !important; }
 .z-actions .z-act svg { flex: none; }
 .z-actions .z-act-num { font-variant-numeric: tabular-nums; }
+
+/* ================= 评论弹窗（iframe 搬视频页评论区） ================= */
+.z-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4vh 4vw;
+  background: rgba(15, 20, 26, 0.45);
+  animation: z-fade 0.14s ease-out;
+}
+@keyframes z-fade { from { opacity: 0; } to { opacity: 1; } }
+.z-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(860px, 92vw);
+  height: min(84vh, 900px);
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+.z-modal-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px 10px 14px;
+  border-bottom: 1px solid #eef1f4;
+}
+.z-modal-badge {
+  flex: none;
+  font-size: 12px;
+  line-height: 18px;
+  color: #175199;
+  background: #eaf1fa;
+  border-radius: 3px;
+  padding: 0 6px;
+}
+.z-modal-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1a1a1a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.z-modal-link {
+  flex: none;
+  font-size: 13px;
+  color: #175199 !important;
+  text-decoration: none !important;
+  white-space: nowrap;
+}
+.z-modal-link:hover { text-decoration: underline !important; }
+.z-modal-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #7b8794;
+  cursor: pointer;
+}
+.z-modal-close:hover { background: #f1f4f7; color: #1a1a1a; }
+.z-modal-body { position: relative; flex: 1 1 auto; min-height: 0; background: #fff; }
+.z-modal-frame { display: block; width: 100%; height: 100%; border: 0; }
+.z-modal-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: #99a0a8;
+  pointer-events: none;
+}
+@media (max-width: 640px) {
+  .z-mask { padding: 0; }
+  .z-modal { width: 100vw; height: 100vh; border-radius: 0; }
+}
 ` : ''}
 `;
 
@@ -732,6 +825,165 @@ ${CONFIG.zhihuLayout ? `
   };
   const ACT_LABELS = { like: '点赞', comment: '评论', fav: '收藏' };
 
+  /* ---- 评论弹窗：iframe 引视频页，同源所以能进去把播放器 / 简介 / 推荐都 CSS 藏掉，只留评论区 ---- */
+  const MODAL_CLEAN_CSS = `
+#biliMainHeader, .right-container, .fixed-sidenav-storage, .palette-button-wrap,
+.bili-header, .international-header, .bili-feedback, .ad-report, .bili-dialog,
+.pop-live-small-mode, #reco_list { display: none !important; }
+/* 左栅里只留评论区，播放器 / 标题 / 工具栏 / 简介 / 标签 / 资源列表全部不显示 */
+.left-container > *:not(#commentapp) { display: none !important; }
+/* 播放器不能 display:none（B 站自己的脚本会报 undefined.style），挪到看不见的角落里就行 */
+.left-container > #playerWrap {
+  display: block !important;
+  position: absolute !important;
+  left: -10000px !important;
+  top: 0 !important;
+  width: 320px !important;
+  height: 180px !important;
+  overflow: hidden !important;
+  pointer-events: none !important;
+}
+/* 视频页是定宽 1080 的，塞进弹窗要拆成自适应；#mirror-vdcon 是 flex，左栅要占满 */
+.left-container, #mirror-vdcon, .video-container-v1, #app.app-v1 {
+  width: auto !important; max-width: none !important; min-width: 0 !important;
+  float: none !important; padding: 0 !important; margin: 0 !important; left: auto !important;
+}
+.left-container { flex: 1 1 100% !important; width: 100% !important; }
+#commentapp { margin: 0 !important; padding: 6px 14px 24px !important; box-sizing: border-box !important; }
+body { background: #fff !important; overflow-x: hidden !important; }
+`;
+
+  let modal = null;
+
+  function closeCommentModal() {
+    if (!modal) return;
+    if (modal.timer) clearInterval(modal.timer);
+    document.removeEventListener('keydown', modal.onKey, true);
+    document.documentElement.style.overflow = modal.prevOverflow;
+    modal.mask.remove();
+    modal = null;
+  }
+
+  function openCommentModal(bvid, title) {
+    if (!CONFIG.commentModal || !bvid) return;
+    if (modal) closeCommentModal();
+
+    const mask = document.createElement('div');
+    mask.className = 'z-mask';
+    mask.addEventListener('mousedown', (ev) => { if (ev.target === mask) closeCommentModal(); });
+
+    const box = document.createElement('div');
+    box.className = 'z-modal';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-modal', 'true');
+    box.setAttribute('aria-label', '评论');
+
+    const head = document.createElement('div');
+    head.className = 'z-modal-head';
+    const badge = document.createElement('span');
+    badge.className = 'z-modal-badge';
+    badge.textContent = '评论';
+    const ttl = document.createElement('div');
+    ttl.className = 'z-modal-title';
+    ttl.textContent = title || '视频评论';
+    ttl.title = ttl.textContent;
+    const open = document.createElement('a');
+    open.className = 'z-modal-link';
+    open.href = 'https://www.bilibili.com/video/' + bvid + '/';
+    open.target = '_blank';
+    open.rel = 'noopener';
+    open.textContent = '在B站打开';
+    open.addEventListener('click', (ev) => ev.stopPropagation());
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'z-modal-close';
+    close.setAttribute('aria-label', '关闭');
+    close.title = '关闭（Esc）';
+    close.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"'
+      + ' stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+    close.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      closeCommentModal();
+    });
+    head.append(badge, ttl, open, close);
+
+    const body = document.createElement('div');
+    body.className = 'z-modal-body';
+    const loading = document.createElement('div');
+    loading.className = 'z-modal-loading';
+    loading.textContent = '评论区加载中…';
+
+    const frame = document.createElement('iframe');
+    frame.className = 'z-modal-frame';
+    frame.title = '视频评论区';
+    frame.src = 'https://www.bilibili.com/video/' + bvid + '/';
+
+    body.append(frame, loading);
+    box.append(head, body);
+    mask.appendChild(box);
+
+    const onKey = (ev) => {
+      if (ev.key === 'Escape' || ev.key === 'Esc') {
+        ev.stopPropagation();
+        closeCommentModal();
+      }
+    };
+
+    const prevOverflow = document.documentElement.style.overflow;
+    document.documentElement.style.overflow = 'hidden';
+    document.addEventListener('keydown', onKey, true);
+    (document.body || document.documentElement).appendChild(mask);
+    try { close.focus({ preventScroll: true }); } catch (e) { /* 忽略 */ }
+
+    modal = { mask, frame, timer: null, onKey, prevOverflow };
+
+    // iframe 同源，可以进去注样式：藏播放器/简介/推荐，只留评论区
+    let passes = 0;
+    const prep = () => {
+      let d = null;
+      try { d = frame.contentDocument; } catch (e) { d = null; }
+      if (!d || !d.documentElement) return false;
+      if (!d.getElementById('z-modal-clean')) {
+        const st = d.createElement('style');
+        st.id = 'z-modal-clean';
+        st.textContent = MODAL_CLEAN_CSS;
+        (d.head || d.documentElement).appendChild(st);
+      }
+      // 别让弹窗里的播放器跑起来（占流量 / 出声）
+      d.querySelectorAll('video').forEach((v) => {
+        try { v.pause(); v.muted = true; } catch (e) { /* 忽略 */ }
+      });
+      const app = d.querySelector('#commentapp') || d.querySelector('bili-comments');
+      if (!app) return false;
+      // 评论列表是 shadow DOM 异步渲染的，见到第一帧就说明差不多了
+      const bc = d.querySelector('bili-comments');
+      const ready = !bc || !bc.shadowRoot || !!bc.shadowRoot.querySelector('bili-comment-thread-renderer, #header');
+      if (!ready) return false;
+      if (passes < 3) {
+        d.documentElement.scrollTop = 0;
+        if (d.body) d.body.scrollTop = 0;
+      }
+      passes++;
+      if (loading.parentNode) loading.remove();
+      return passes >= 3;
+    };
+    prep();
+    // 评论区异步渲染：注完样式后再盯一会儿，顺便反复暂停播放器
+    modal.timer = setInterval(() => {
+      if (!modal) return;
+      let done = false;
+      try { done = prep(); } catch (e) { done = false; }
+      if (done && modal && modal.timer) { clearInterval(modal.timer); modal.timer = null; }
+    }, 500);
+    // 最多盯 20 秒，别一直轮询
+    setTimeout(() => {
+      if (!modal) return;
+      if (modal.timer) { clearInterval(modal.timer); modal.timer = null; }
+      if (loading.parentNode) loading.textContent = '评论区没加载出来？点右上角「在B站打开」';
+    }, 20000);
+  }
+
   const fmtNum = (n) => {
     n = Number(n) || 0;
     if (n >= 1e8) return (n / 1e8).toFixed(1).replace(/\.0$/, '') + '亿';
@@ -739,7 +991,7 @@ ${CONFIG.zhihuLayout ? `
     return String(n);
   };
 
-  function buildActions(url) {
+  function buildActions(url, bvid, title) {
     const acts = document.createElement('div');
     acts.className = 'z-actions';
     acts.style.display = 'none'; // 拿到统计数据后再显示，避免占位跳动
@@ -755,6 +1007,17 @@ ${CONFIG.zhihuLayout ? `
         + ' stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
         + '<path d="' + ICONS[key] + '"/></svg>'
         + '<span class="z-act-num">—</span>';
+      if (key === 'comment' && CONFIG.commentModal && bvid) {
+        // 评论不跳页，就地开弹窗看
+        a.removeAttribute('target');
+        a.setAttribute('role', 'button');
+        a.title = '在弹窗里看评论区';
+        a.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          openCommentModal(bvid, title);
+        });
+      }
       acts.appendChild(a);
     });
     return acts;
@@ -1098,7 +1361,7 @@ ${CONFIG.zhihuLayout ? `
     }
 
     tit.insertAdjacentElement('afterend', box);
-    if (CONFIG.showActions) box.appendChild(buildActions(link ? link.href : href));
+    if (CONFIG.showActions) box.appendChild(buildActions(link ? link.href : href, bvid, tit.textContent));
     card.dataset.zbBvid = bvid;
     card.dataset.zbState = 'ok';
 
