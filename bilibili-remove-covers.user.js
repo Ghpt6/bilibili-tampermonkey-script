@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         哔哩哔哩 - 移除首页视频封面图
 // @namespace    https://www.bilibili.com/
-// @version      2.17.0
-// @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，「简介」「字幕」各带徽章（点「阅读全文」/「展开字幕」就地展开，字幕展开后右下角悬浮「收起字幕」，不用滚到末尾），字幕按原生时间轴一条一行并标出时间点（点时间点直接跳到视频该处），点「评论」弹窗里直接渲染评论（热门/最新、点赞数、表情、子回复），无简介 / 无字幕会提示，底部「点赞」点了就地给视频点赞（再点取消）/「评论」弹窗看评论 /「收藏」只显示数字不可点，另加一排质量指标（赞播比 / 评论率 / 收藏率 / 转发率 / 互动率 / 评赞比 / 藏赞比 / 转赞比 / 理性认可率）帮判断值不值得点
+// @version      2.18.0
+// @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，「简介」「字幕」各带徽章（点「阅读全文」/「展开字幕」就地展开，字幕展开后右下角悬浮「收起字幕」，不用滚到末尾），字幕按原生时间轴一条一行并标出时间点（点时间点直接跳到视频该处），点「评论」弹窗里直接渲染评论（热门/最新、点赞数、表情、子回复），无简介 / 无字幕会提示，底部「点赞」点了就地给视频点赞（再点取消）/「评论」弹窗看评论 /「收藏」只显示数字不可点，另加一块质量指标仪表盘（互动率环形 + 五维雷达 + 赞播比/评论率/收藏率/转发率/互动率/评赞比/藏赞比/转赞比/理性认可率 9 张轨道卡），可一键收成一行 chips
 // @author       you
 // @match        https://www.bilibili.com/*
 // @match        https://www.bilibili.com
@@ -22,7 +22,7 @@
  *   6. 简介     view 接口 → 简介 / 标签 / 播放·评论·收藏数
  *   7. 字幕     WBI 签名 → player/wbi/v2 → 字幕 JSON → [[秒, 正文], ...]
  *             展开后内联「收起」滚出视口时，右下角浮一个「收起字幕」（只服务最后展开的那块）
- *   8. 卡片     标题 +「UP主：」+「简介」+「字幕」+ meta + 操作栏 + 质量指标
+ *   8. 卡片     标题 +「UP主：」+「简介」+「字幕」+ meta + 操作栏 + 质量指标仪表盘
  *   9. 评论     /x/v2/reply 分页渲染 + 子回复按需加载
  *  10. 启动     IntersectionObserver 懒加载 + MutationObserver 增量扫描
  * ========================================================================== */
@@ -257,26 +257,105 @@ ${CONFIG.zhihuLayout ? `
 .z-actions .z-act.z-static:hover { color: inherit !important; }
 .z-act.z-busy { opacity: .55; pointer-events: none; }
 
-/* ===== 质量指标：赞播比 / 评论率 / 互动率 … 扫一眼就知道值不值得点 ===== */
-.z-quality {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px;
-  margin-top: 10px; font-size: 12px; line-height: 20px;
-}
+/* ===== 质量指标：仪表盘（互动率环形 + 五维雷达 + 9 张轨道卡），可折叠成一行 chips ===== */
+.z-quality { margin-top: 12px; }
 .z-quality:empty { display: none !important; }
-.z-quality .z-label { margin-right: 2px; }
+.z-q-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; }
+.z-quality .z-q-grade {
+  font-size: 12px; font-weight: 600; line-height: 18px; padding: 0 8px;
+  border-radius: 99px; border: 1px solid transparent; white-space: nowrap;
+}
+.z-quality .z-q-note { font-size: 11.5px; color: #98a1ab; }
+.z-quality .z-q-note b { font-weight: 600; color: #6b7a8c; }
+.z-quality .z-q-toggle { margin-left: auto; font-size: 12px; }
+
+/* 结论条：环形 + 一句话 + 雷达 */
+.z-q-top {
+  display: flex; align-items: center; gap: 14px; margin-top: 8px;
+  padding: 10px 12px; background: #f8fafc;
+  border: 1px solid #edf1f5; border-radius: 8px;
+}
+.z-q-ring { position: relative; width: 62px; height: 62px; flex: none; }
+.z-q-ring svg { display: block; width: 100%; height: 100%; }
+.z-q-ring .bgc { fill: none; stroke: #e8edf3; stroke-width: 7; }
+.z-q-ring .fg {
+  fill: none; stroke-width: 7; stroke-linecap: round;
+  transform: rotate(-90deg); transform-origin: 31px 31px;
+  transition: stroke-dashoffset .5s cubic-bezier(.22, 1, .36, 1);
+}
+.z-q-ring b {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.z-q-sum { flex: 1 1 auto; min-width: 0; }
+.z-q-sum p { margin: 0; font-size: 12.5px; line-height: 1.65; color: #6b7a8c; }
+.z-q-mini { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+.z-q-mini span {
+  font-size: 11px; line-height: 18px; padding: 0 6px;
+  border-radius: 3px; background: #eff2f6; color: #8590a6;
+}
+.z-q-mini b { font-weight: 600; color: #5a6472; font-variant-numeric: tabular-nums; }
+.z-q-mini .z-q-warn { background: #f6f0e6; color: #a98346; cursor: help; }
+.z-q-radar { flex: none; width: 156px; }
+.z-q-radar svg { display: block; width: 100%; height: auto; }
+
+/* 9 张指标卡 */
+.z-q-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
+  gap: 8px; margin-top: 8px;
+}
+.z-quality .z-qcard {
+  padding: 6px 9px 4px; border: 1px solid #edf1f5; border-radius: 8px;
+  background: #fff; transition: border-color .18s ease, box-shadow .18s ease;
+}
+.z-quality .z-qcard:hover { border-color: #dfe6ee; box-shadow: 0 8px 18px -14px rgba(16, 24, 40, .45); }
+.z-quality .z-qcard .c-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+.z-quality .z-qcard .c-name { font-size: 12.5px; font-weight: 600; color: #4a5462; }
+.z-quality .z-qcard .c-chip {
+  font-size: 10.5px; line-height: 16px; padding: 0 6px;
+  border-radius: 99px; border: 1px solid transparent; white-space: nowrap;
+}
+.z-quality .z-qcard .c-val { display: flex; align-items: baseline; gap: 6px; margin-top: 1px; }
+.z-quality .z-qcard .c-val .num {
+  font-size: 19px; font-weight: 700; letter-spacing: -.4px;
+  font-variant-numeric: tabular-nums; line-height: 1.35;
+}
+.z-quality .z-qcard .c-form { font-size: 10.5px; color: #a7b0bb; }
+.z-quality .z-qcard .track { position: relative; height: 7px; border-radius: 99px; margin-top: 8px; }
+.z-quality .z-qcard .track::before {
+  content: ""; position: absolute; inset: 0; border-radius: 99px;
+  background: var(--g); box-shadow: inset 0 0 0 1px rgba(16, 24, 40, .06);
+}
+.z-quality .z-qcard .marker {
+  position: absolute; top: 50%; width: 3px; height: 15px; border-radius: 2px;
+  background: #fff; transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 1.5px rgba(16, 24, 40, .55);
+  transition: left .45s cubic-bezier(.22, 1, .36, 1);
+}
+.z-quality .z-qcard .c-ticks {
+  position: relative; height: 12px; margin-top: 3px;
+  font-size: 9.5px; color: #adb6c1; font-variant-numeric: tabular-nums;
+}
+.z-quality .z-qcard .c-ticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+
+/* 紧凑视图的 chips（折叠后） */
 .z-quality .z-metric {
   display: inline-flex; align-items: baseline; gap: 4px;
   padding: 0 7px; border-radius: 3px; white-space: nowrap;
-  background: #f4f6f8; cursor: help;
+  font-size: 12px; line-height: 20px; background: #f4f6f8; cursor: help;
 }
 .z-quality .z-metric-k { color: #98a1ab; }
 .z-quality .z-metric-v { font-weight: 600; font-variant-numeric: tabular-nums; color: #5a6472; }
-/* 高于参考区间 / 落在参考区间 / 低于参考区间，只做温和提示，不是判卷 */
-.z-quality .z-m-good { background: #ebf5ee; }
-.z-quality .z-m-good .z-metric-v { color: #2c9a58; }
-.z-quality .z-m-low { background: #fdf4e9; }
-.z-quality .z-m-low .z-metric-v { color: #bf7a2c; }
 .z-quality .z-m-na .z-metric-v { color: #b9c0c8; }
+
+/* 窄屏：环形与结论并排，雷达单独一行居中 */
+@media (max-width: 620px) {
+  .z-q-top { flex-wrap: wrap; }
+  .z-q-sum { flex: 1 1 150px; }
+  .z-q-sum p { font-size: 12px; }
+  .z-q-radar { width: 140px; margin: 4px auto 0; }
+  .z-q-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+}
 
 /* 轻提示：点赞成功 / 未登录 / 风控 */
 .z-toast {
@@ -1140,89 +1219,361 @@ ${CONFIG.zhihuLayout ? `
     acts.style.display = '';
   }
 
-  /**
-   * 质量指标：都是「比值」，回答的是「这个视频值不值得点」。
-   * 参考区间来自运营侧常见经验值，只做温和着色（高/正常/低），不判卷。
-   */
-  const pctText = (v) => {
-    if (!isFinite(v) || v < 0) return '—';
+  /* -------- 质量指标：仪表盘（结论条 + 雷达 + 9 张轨道卡），可折叠成一行 chips -------- */
+  const Q_COLOR = { bad: '#d4574f', warn: '#d8912f', ok: '#8aa62f', good: '#2f9e5c', best: '#2b7fd0' };
+  const Q_AXES = [
+    { key: 'likeRate', label: '赞播比' },
+    { key: 'commentRate', label: '评论率' },
+    { key: 'favRate', label: '收藏率' },
+    { key: 'shareRate', label: '转发率' },
+    { key: 'engRate', label: '互动率' },
+  ];
+
+  /** 13.24% / 0.8% / <0.1%：去掉无意义的尾随 0 */
+  const qPct = (v) => {
+    if (v == null || !isFinite(v)) return '—';
     const p = v * 100;
     if (p === 0) return '0%';
     if (p < 0.1) return '<0.1%';
-    return p.toFixed(1) + '%';
+    const s = p >= 10 ? p.toFixed(1) : p.toFixed(2);
+    return s.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '') + '%';
   };
-  const ratioText = (v) => (isFinite(v) && v >= 0 ? v.toFixed(2) : '—');
-  /** v ≥ good → good；≥ low → ok；否则 low（NaN → na） */
-  const grade = (v, low, good) => (!isFinite(v) ? 'na' : v >= good ? 'good' : v >= low ? 'ok' : 'low');
+  const qRatio = (v) => (v == null || !isFinite(v) ? '—' : String(+(+v).toFixed(v < 0.1 ? 3 : 2)));
+  const qVal = (m) => (m.fmt === 'pct' ? qPct(m.value) : qRatio(m.value));
+  const qTick = (m, v) => (m.fmt === 'pct' ? qPct(v) : String(+(+v).toFixed(2)));
+  /** 区间是 [上一档上限, 本档上限)，所以恰好 3% 算「达标」而不是「偏低」 */
+  const qBandOf = (m, v) => m.bands.find((b) => v < b.to) || m.bands[m.bands.length - 1];
+  /** 0~1：相对该指标上界的得分，用于雷达和强项 / 短板 */
+  const qScore = (m) => (m.value == null ? 0 : Math.min(1, Math.max(0, m.value / m.max)));
+  const qGrad = (m) => {
+    const stops = [];
+    let prev = 0;
+    m.bands.forEach((b) => {
+      const p = Math.max(0, Math.min(100, b.to / m.max * 100));
+      stops.push(Q_COLOR[b.cls] + 'd9 ' + prev + '%', Q_COLOR[b.cls] + 'd9 ' + p + '%');
+      prev = p;
+    });
+    return 'linear-gradient(90deg,' + stops.join(',') + ')';
+  };
 
-  function qualityItems(st) {
+  /** 9 个指标：value 为 null = 算不出来（分母为 0） */
+  function qualityMetrics(st) {
     const view = Number(st.view) || 0;
     const like = Number(st.like) || 0;
     const reply = Number(st.reply) || 0;
     const fav = Number(st.fav) || 0;
     const share = Number(st.share) || 0;
-    const r = (a, b) => (b > 0 ? a / b : NaN);
-    const likeRate = r(like, view);
-    const replyRate = r(reply, view);
-    const favRate = r(fav, view);
-    const shareRate = r(share, view);
-    const interRate = r(like + reply + fav + share, view);
-    const replyLike = r(reply, like);
-    const favLike = r(fav, like);
-    const shareLike = r(share, like);
-    const rational = r(fav + share, like);
+    const over = (v) => (view > 0 ? v / view : null);
+    const per = (v) => (like > 0 ? v / like : null);
     return [
-      { k: '赞播比', v: pctText(likeRate), lv: grade(likeRate, 0.03, 0.07),
-        tip: '赞播比 = 点赞 / 播放\n参考 3%~5%，7%+ 优秀\n诊断：内容“讨喜度”' },
-      { k: '评论率', v: pctText(replyRate), lv: grade(replyRate, 0.005, 0.015),
-        tip: '评论率 = 评论 / 播放\n参考 0.5%~1.5%\n诊断：话题性' },
-      { k: '收藏率', v: pctText(favRate), lv: grade(favRate, 0.005, 0.03),
-        tip: '收藏率 = 收藏 / 播放\n干货 >3%，娱乐 <0.5%\n诊断：“以后要用”' },
-      { k: '转发率', v: pctText(shareRate), lv: grade(shareRate, 0.003, 0.008),
-        tip: '转发率 = 转发 / 播放\n参考 0.3%~0.8%\n诊断：社交货币强度' },
-      { k: '互动率', v: pctText(interRate), lv: grade(interRate, 0.03, 0.05),
-        tip: '互动率 =（赞+评+藏+转）/ 播放\n3% 及格，5% 好\n诊断：算法主看这个' },
-      { k: '评赞比', v: ratioText(replyLike), lv: grade(replyLike, 0.1, 0.2),
-        tip: '评赞比 = 评论 / 点赞\n参考 0.1~0.2\n诊断：有没有话可说' },
-      { k: '藏赞比', v: ratioText(favLike), lv: grade(favLike, 0.1, 0.3),
-        tip: '藏赞比 = 收藏 / 点赞\n干货 >0.3，娱乐 <0.1\n诊断：“有用” vs “好看”' },
-      { k: '转赞比', v: ratioText(shareLike), lv: grade(shareLike, 0.1, 0.3),
-        tip: '转赞比 = 转发 / 点赞\n参考 0.1~0.3，越高越好\n诊断：“值得代表我”' },
-      { k: '理性认可率', v: ratioText(rational), lv: grade(rational, 0.2, 0.3),
-        tip: '理性认可率 =（收藏+转发）/ 点赞\n>0.3 算高\n诊断：愿付出行动成本的比例' },
+      { key: 'likeRate', name: '赞播比', formula: '点赞 / 播放', diag: '内容「讨喜度」', fmt: 'pct',
+        value: over(like), max: 0.09, good: 0.03, ref: '3%~5%，7%+ 优秀',
+        bands: [{ to: 0.03, label: '偏低', cls: 'bad' }, { to: 0.05, label: '达标', cls: 'ok' },
+          { to: 0.07, label: '良好', cls: 'good' }, { to: 0.09, label: '优秀', cls: 'best' }] },
+
+      { key: 'commentRate', name: '评论率', formula: '评论 / 播放', diag: '话题性', fmt: 'pct',
+        value: over(reply), max: 0.025, good: 0.005, ref: '0.5%~1.5%',
+        bands: [{ to: 0.005, label: '冷清', cls: 'bad' }, { to: 0.015, label: '达标', cls: 'ok' },
+          { to: 0.02, label: '活跃', cls: 'good' }, { to: 0.025, label: '强话题', cls: 'best' }] },
+
+      { key: 'favRate', name: '收藏率', formula: '收藏 / 播放', diag: '「以后要用」', fmt: 'pct',
+        value: over(fav), max: 0.06, good: 0.005, ref: '干货 >3%，娱乐 <0.5%',
+        bands: [{ to: 0.005, label: '偏低', cls: 'bad' }, { to: 0.015, label: '一般', cls: 'ok' },
+          { to: 0.03, label: '实用', cls: 'good' }, { to: 0.06, label: '干货', cls: 'best' }] },
+
+      { key: 'shareRate', name: '转发率', formula: '转发 / 播放', diag: '社交货币强度', fmt: 'pct',
+        value: over(share), max: 0.015, good: 0.003, ref: '0.3%~0.8%',
+        bands: [{ to: 0.003, label: '偏弱', cls: 'bad' }, { to: 0.008, label: '达标', cls: 'ok' },
+          { to: 0.012, label: '有传播力', cls: 'good' }, { to: 0.015, label: '强', cls: 'best' }] },
+
+      { key: 'engRate', name: '互动率', formula: '（赞+评+藏+转）/ 播放', diag: '算法主看这个', fmt: 'pct',
+        value: over(like + reply + fav + share), max: 0.12, good: 0.05, ref: '3% 及格，5% 好',
+        bands: [{ to: 0.03, label: '不及格', cls: 'bad' }, { to: 0.05, label: '及格', cls: 'warn' },
+          { to: 0.08, label: '好', cls: 'ok' }, { to: 0.12, label: '优秀', cls: 'best' }] },
+
+      { key: 'commentLike', name: '评赞比', formula: '评论 / 点赞', diag: '有没有话可说', fmt: 'ratio',
+        value: per(reply), max: 0.35, good: 0.2, ref: '0.1~0.2',
+        bands: [{ to: 0.1, label: '共鸣弱', cls: 'bad' }, { to: 0.2, label: '正常', cls: 'good' },
+          { to: 0.35, label: '话题强', cls: 'best' }] },
+
+      { key: 'favLike', name: '藏赞比', formula: '收藏 / 点赞', diag: '「有用」vs「好看」', fmt: 'ratio',
+        value: per(fav), max: 0.6, good: 0.3, ref: '干货 >0.3，娱乐 <0.1',
+        bands: [{ to: 0.1, label: '好看型', cls: 'bad' }, { to: 0.3, label: '一般', cls: 'warn' },
+          { to: 0.45, label: '有用', cls: 'good' }, { to: 0.6, label: '强收藏', cls: 'best' }] },
+
+      { key: 'shareLike', name: '转赞比', formula: '转发 / 点赞', diag: '「值得代表我」', fmt: 'ratio',
+        value: per(share), max: 0.45, good: 0.3, ref: '0.1~0.3，越高越好',
+        bands: [{ to: 0.1, label: '偏弱', cls: 'bad' }, { to: 0.3, label: '健康', cls: 'good' },
+          { to: 0.45, label: '强', cls: 'best' }] },
+
+      { key: 'rational', name: '理性认可率', formula: '（收藏+转发）/ 点赞', diag: '愿付出行动成本的比例', fmt: 'ratio',
+        value: per(fav + share), max: 0.8, good: 0.3, ref: '>0.3 算高',
+        bands: [{ to: 0.15, label: '冲动点赞', cls: 'bad' }, { to: 0.3, label: '一般', cls: 'warn' },
+          { to: 0.5, label: '高', cls: 'good' }, { to: 0.8, label: '极高', cls: 'best' }] },
     ];
   }
 
-  /** 质量指标行：数据到了才显示，播放量为 0（接口没给）/ 开关关闭就整行藏起来 */
+  /* 图表 / 紧凑两种视图，用户点了就全局记住（每张卡都跟着变） */
+  const QVIEW_KEY = 'zbili:qview';
+  let qView = 'chart';
+  try { if (localStorage.getItem(QVIEW_KEY) === 'mini') qView = 'mini'; } catch (e) { /* 隐私模式 */ }
+  function setQView(v) {
+    qView = v;
+    try { localStorage.setItem(QVIEW_KEY, v); } catch (e) { /* 存不了就算了 */ }
+    document.querySelectorAll('.z-quality').forEach((box) => {
+      if (box._stat) renderQuality(box, box._stat);
+    });
+  }
+
+  /** 卡片里的一块「数据」：结论条 + 雷达 + 9 张轨道卡 */
   function fillQuality(card, stat) {
-    const row = card.querySelector('.z-quality');
-    if (!row) return;
-    row.textContent = '';
-    row.removeAttribute('title');
+    const box = card.querySelector('.z-quality');
+    if (!box) return;
     const view = Number(stat && stat.view) || 0;
+    box.textContent = '';
     if (!CONFIG.showQuality || !view) {
-      row.style.display = 'none';
+      box.style.display = 'none';
+      box._stat = null;
+      return;
+    }
+    box.style.display = '';
+    box._stat = stat;
+    box._metrics = qualityMetrics(stat);
+    renderQuality(box, stat);
+  }
+
+  function renderQuality(box, stat) {
+    const list = box._metrics || qualityMetrics(stat);
+    const viewNum = Number(stat.view) || 0;
+    box.textContent = '';
+
+    /* 第一行：「数据」徽章 + 互动率档位 + 强项/短板 + 视图切换 */
+    const head = el('div', 'z-q-head');
+    head.appendChild(el('span', 'z-label', '数据'));
+
+    const eng = list.find((m) => m.key === 'engRate');
+    const scored = list.filter((m) => m.value != null).sort((a, b) => qScore(b) - qScore(a));
+    const engBand = eng.value != null ? qBandOf(eng, eng.value) : null;
+    if (engBand) {
+      const g = el('span', 'z-q-grade', '互动率 ' + qVal(eng) + ' · ' + engBand.label);
+      g.style.color = Q_COLOR[engBand.cls];
+      g.style.background = Q_COLOR[engBand.cls] + '14';
+      g.style.borderColor = Q_COLOR[engBand.cls] + '3d';
+      head.appendChild(g);
+    }
+    if (scored.length > 1) {
+      const strong = scored[0];
+      const weak = scored[scored.length - 1];
+      const note = el('span', 'z-q-note');
+      note.innerHTML = '强项 <b>'
+        + escapeHtml(strong.name + ' ' + qVal(strong)) + '</b> · 短板 <b>'
+        + escapeHtml(weak.name + ' ' + qVal(weak)) + '</b>';
+      head.appendChild(note);
+    }
+
+    const toggle = makeMore(qView === 'mini' ? '图表' : '收起图表');
+    toggle.classList.add('z-q-toggle');
+    if (qView !== 'mini') toggle.classList.add('z-open');
+    const flip = (ev) => { if (ev) { ev.preventDefault(); ev.stopPropagation(); } setQView(qView === 'mini' ? 'chart' : 'mini'); };
+    toggle.addEventListener('click', flip);
+    toggle.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') flip(ev); });
+    head.appendChild(toggle);
+    box.appendChild(head);
+
+    /* 紧凑视图：就是原来那行 chip */
+    if (qView === 'mini') {
+      const raw = '播放 ' + fmtNum(stat.view) + ' · 赞 ' + fmtNum(stat.like) + ' · 评 ' + fmtNum(stat.reply)
+        + ' · 藏 ' + fmtNum(stat.fav) + ' · 转 ' + fmtNum(stat.share);
+      list.forEach((m) => {
+        const band = m.value == null ? null : qBandOf(m, m.value);
+        const chip = el('span', 'z-metric z-m-' + (band ? band.cls : 'na'));
+        if (band) {
+          chip.style.color = Q_COLOR[band.cls];
+          chip.style.background = Q_COLOR[band.cls] + '12';
+        }
+        chip.appendChild(el('span', 'z-metric-k', m.name));
+        chip.appendChild(el('span', 'z-metric-v', qVal(m)));
+        chip.title = m.name + ' = ' + m.formula + '\n参考 ' + m.ref + '\n诊断：' + m.diag + '\n\n' + raw;
+        box.appendChild(chip);
+      });
+      if (viewNum < 1000) {
+        const warn = el('span', 'z-metric z-m-na', '样本小');
+        warn.title = '播放量不到 1000，各项比值波动很大，随便看看就好';
+        box.appendChild(warn);
+      }
       return;
     }
 
-    const raw = '播放 ' + fmtNum(view) + ' · 赞 ' + fmtNum(stat.like) + ' · 评 ' + fmtNum(stat.reply)
-      + ' · 藏 ' + fmtNum(stat.fav) + ' · 转 ' + fmtNum(stat.share);
-    row.appendChild(el('span', 'z-label', '数据'));
-    qualityItems(stat).forEach((it) => {
-      const chip = el('span', 'z-metric z-m-' + it.lv);
-      chip.appendChild(el('span', 'z-metric-k', it.k));
-      chip.appendChild(el('span', 'z-metric-v', it.v));
-      chip.title = it.tip + '\n\n' + raw;
-      row.appendChild(chip);
+    /* 图表视图：结论条（环形 + 一句话 + 雷达） */
+    const top = el('div', 'z-q-top');
+    const ring = el('div', 'z-q-ring');
+    const R = 26;
+    const C = 2 * Math.PI * R;
+    const frac = eng.value == null ? 0 : Math.min(1, eng.value / eng.max);
+    const col = engBand ? Q_COLOR[engBand.cls] : '#c3ccd6';
+    ring.innerHTML = '<svg viewBox="0 0 62 62" aria-hidden="true">'
+      + '<circle class="bgc" cx="31" cy="31" r="' + R + '"/>'
+      + '<circle class="fg" cx="31" cy="31" r="' + R + '" stroke="' + col + '"'
+      + ' stroke-dasharray="' + C.toFixed(1) + '" stroke-dashoffset="' + (C * (1 - frac)).toFixed(1) + '"/></svg>';
+    const ringNum = el('b', '', qVal(eng));
+    ringNum.style.color = col;
+    ring.appendChild(ringNum);
+    ring.title = '互动率 = ' + eng.formula + '\n参考 ' + eng.ref + '\n诊断：' + eng.diag;
+    top.appendChild(ring);
+
+    const sum = el('div', 'z-q-sum');
+    const desc = el('p', '', qVerdict(eng, scored));
+    sum.appendChild(desc);
+    const mini = el('div', 'z-q-mini');
+    const rat = list.find((m) => m.key === 'rational');
+    [['播放', fmtNum(stat.view)], ['赞', fmtNum(stat.like)], ['评', fmtNum(stat.reply)],
+      ['藏', fmtNum(stat.fav)], ['转', fmtNum(stat.share)], ['理性认可率', qVal(rat)]].forEach(([k, v]) => {
+      const s = el('span');
+      s.innerHTML = escapeHtml(k) + ' <b>' + escapeHtml(v) + '</b>';
+      mini.appendChild(s);
     });
-    // 播放量太少时比值噪声很大，给个明确提示，而不是让用户信以为真
-    if (view < 1000) {
-      const warn = el('span', 'z-metric z-m-na');
-      warn.appendChild(el('span', 'z-metric-k', '样本小'));
-      warn.title = '播放量不到 1000，各项比值波动很大，随便看看就好';
-      row.appendChild(warn);
+    if (viewNum < 1000) {
+      const s = el('span', 'z-q-warn', '样本小');
+      s.title = '播放量不到 1000，各项比值波动很大，随便看看就好';
+      mini.appendChild(s);
     }
-    row.style.display = '';
+    sum.appendChild(mini);
+    top.appendChild(sum);
+    top.appendChild(radarSvg(list));
+    box.appendChild(top);
+
+    /* 图表视图：9 张轨道卡 */
+    const grid = el('div', 'z-q-grid');
+    list.forEach((m) => grid.appendChild(qCard(m)));
+    box.appendChild(grid);
+  }
+
+  /** 一句话结论：互动率档位 + 一句建议 + 强项 / 短板 */
+  function qVerdict(eng, scored) {
+    if (eng.value == null) return '播放量为 0，算不出互动率。';
+    const v = eng.value;
+    let s;
+    if (v >= eng.bands[3].to) s = '互动率已进入算法加推区间，重点是把人留住';
+    else if (v >= 0.05) s = '互动率高于 5%，算法层面已经算「好」';
+    else if (v >= 0.03) s = '互动率刚过及格线，首屏钩子和完播还有空间';
+    else s = '互动率低于 3%，先解决「点进来就想走」的问题';
+    let tail = '';
+    if (scored.length > 1) {
+      tail = '；结构上强项是「' + scored[0].name + '」，短板是「' + scored[scored.length - 1].name + '」。';
+    }
+    return s + tail;
+  }
+
+  /** 一张指标卡：名称 + 档位 chip + 大数字 + 渐变轨道 + 刻度 */
+  function qCard(m) {
+    const card = el('div', 'z-qcard');
+    const has = m.value != null;
+    const band = has ? qBandOf(m, m.value) : null;
+    const col = band ? Q_COLOR[band.cls] : '#b9c0c8';
+
+    const head = el('div', 'c-head');
+    head.appendChild(el('span', 'c-name', m.name));
+    const chip = el('span', 'c-chip', has ? band.label : '无数据');
+    chip.style.color = col;
+    chip.style.background = col + '16';
+    chip.style.borderColor = col + '3d';
+    head.appendChild(chip);
+    card.appendChild(head);
+
+    const val = el('div', 'c-val');
+    const num = el('span', 'num', qVal(m));
+    num.style.color = col;
+    val.appendChild(num);
+    val.appendChild(el('span', 'c-form', m.formula));
+    card.appendChild(val);
+
+    const track = el('div', 'track');
+    track.style.setProperty('--g', qGrad(m));
+    if (!has) track.style.opacity = '.35';
+    const marker = el('div', 'marker');
+    if (has) marker.style.left = Math.max(0, Math.min(100, m.value / m.max * 100)) + '%';
+    else marker.style.opacity = '0';
+    track.appendChild(marker);
+    card.appendChild(track);
+
+    const ticks = el('div', 'c-ticks');
+    m.bands.slice(0, -1).forEach((b) => {
+      const tick = el('span', '', qTick(m, b.to));
+      tick.style.left = Math.min(100, b.to / m.max * 100) + '%';
+      ticks.appendChild(tick);
+    });
+    card.appendChild(ticks);
+
+    card.title = m.name + ' = ' + m.formula + '\n参考 ' + m.ref + '\n诊断：' + m.diag
+      + '\n当前档位：' + (band ? band.label : '无数据');
+    return card;
+  }
+
+  /** 五维雷达：实线 = 当前值（相对上界），虚线 = 及格线 */
+  let qGradSeq = 0;
+  function radarSvg(list) {
+    const W = 156;
+    const H = 122;
+    const cx = 78;
+    const cy = 60;
+    const R = 40;
+    const n = Q_AXES.length;
+    const pt = (i, s) => {
+      const a = -Math.PI / 2 + i * 2 * Math.PI / n;
+      return [cx + Math.cos(a) * R * s, cy + Math.sin(a) * R * s];
+    };
+    const poly = (vals) => vals.map((s, i) => {
+      const p = pt(i, Math.max(0.02, s));
+      return p[0].toFixed(1) + ',' + p[1].toFixed(1);
+    }).join(' ');
+    const of = (key) => list.find((m) => m.key === key);
+
+    let rings = '';
+    [0.25, 0.5, 0.75, 1].forEach((s) => {
+      rings += '<polygon points="' + poly(Q_AXES.map(() => s)) + '" fill="none" stroke="'
+        + (s === 1 ? '#e3e9f0' : '#eef2f7') + '" stroke-width="1"/>';
+    });
+    let spokes = '';
+    for (let i = 0; i < n; i++) {
+      const p = pt(i, 1);
+      spokes += '<line x1="' + cx + '" y1="' + cy + '" x2="' + p[0].toFixed(1) + '" y2="'
+        + p[1].toFixed(1) + '" stroke="#eef2f7"/>';
+    }
+    let labels = '';
+    Q_AXES.forEach((ax, i) => {
+      const p = pt(i, 1.2);
+      const anchor = Math.abs(p[0] - cx) < 6 ? 'middle' : (p[0] < cx ? 'end' : 'start');
+      labels += '<text x="' + p[0].toFixed(1) + '" y="' + (p[1] + 3.5).toFixed(1)
+        + '" text-anchor="' + anchor + '" font-size="9.5" fill="#9aa4af">' + ax.label + '</text>';
+    });
+
+    const values = Q_AXES.map((ax) => qScore(of(ax.key) || {}));
+    const base = Q_AXES.map((ax) => {
+      const m = of(ax.key);
+      return m ? Math.min(1, m.good / m.max) : 0.5;
+    });
+    const gid = 'z-q-g' + (qGradSeq++);
+    const svg = '<div class="z-q-radar" title="五维体检：实线是这条视频，虚线是及格基准（相对各指标上界）">'
+      + '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="五维指标雷达图">'
+      + '<defs><linearGradient id="' + gid + '" x1="0" y1="0" x2="1" y2="1">'
+      + '<stop offset="0%" stop-color="#38bdf8" stop-opacity=".45"/>'
+      + '<stop offset="100%" stop-color="#a78bfa" stop-opacity=".3"/></linearGradient></defs>'
+      + rings + spokes
+      + '<polygon points="' + poly(base) + '" fill="none" stroke="#b9c0c8" stroke-width="1.2" stroke-dasharray="4 4" opacity=".75"/>'
+      + '<polygon points="' + poly(values) + '" fill="url(#' + gid + ')" stroke="#2f7fd0" stroke-width="1.6" stroke-linejoin="round"/>'
+      + Q_AXES.map((ax, i) => {
+        const p = pt(i, Math.max(0.02, values[i]));
+        return '<circle cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="2.4" fill="#fff" stroke="#2f7fd0" stroke-width="1.4"/>';
+      }).join('')
+      + labels + '</svg></div>';
+    return wrapSvg(svg);
+  }
+  function wrapSvg(html) {
+    const box = el('div');
+    box.innerHTML = html;
+    const node = box.firstElementChild;
+    box.removeChild(node);
+    return node;
   }
 
   /** 数字 = 服务器给的统计值 + 本地操作带来的增量 */
