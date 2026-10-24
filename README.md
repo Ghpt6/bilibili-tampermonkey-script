@@ -17,18 +17,6 @@
 | --- | --- |
 | `bilibili-remove-covers.user.js` | 脚本本体（唯一需要维护的文件） |
 
-## 安装 / 更新
-
-1. 浏览器安装 [篡改猴 Tampermonkey](https://www.tampermonkey.net/)。
-2. 打开脚本文件，把内容粘进篡改猴的「添加新脚本」，或起一个本地静态服务后用浏览器打开 `.user.js` 地址，篡改猴会自动弹出安装页。
-
-```powershell
-# 在当前目录起一个本地服务，然后浏览器访问 http://127.0.0.1:8765/bilibili-remove-covers.user.js
-python -m http.server 8765 --bind 127.0.0.1
-```
-
-3. 打开 https://www.bilibili.com/ 即可看到效果（脚本 `@run-at document-start`，无闪屏）。
-
 ## 配置
 
 改脚本顶部 `CONFIG`，保存后刷新页面生效：
