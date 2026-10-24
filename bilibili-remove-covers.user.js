@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         哔哩哔哩 - 移除首页视频封面图
 // @namespace    https://www.bilibili.com/
-// @version      2.12.0
-// @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，「简介」「字幕」各带徽章（点「阅读全文」/「展开字幕」就地展开），字幕按原生时间轴一条一行并标出时间点（点时间点直接跳到视频该处），点「评论」弹窗里直接渲染评论（热门/最新、点赞数、表情、子回复），无简介 / 无字幕会提示，底部「点赞」点了就地给视频点赞（再点取消）/「评论」/「收藏」
+// @version      2.12.1
+// @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，「简介」「字幕」各带徽章（点「阅读全文」/「展开字幕」就地展开），字幕按原生时间轴一条一行并标出时间点（点时间点直接跳到视频该处），点「评论」弹窗里直接渲染评论（热门/最新、点赞数、表情、子回复），无简介 / 无字幕会提示，底部「点赞」点了就地给视频点赞（再点取消）/「评论」弹窗看评论 /「收藏」只显示数字不可点
 // @author       you
 // @match        https://www.bilibili.com/*
 // @match        https://www.bilibili.com
@@ -54,6 +54,9 @@
 
     /** 点「点赞」时直接调接口点赞（再点取消），false 则恢复成跳视频页 */
     likeInPlace: true,
+
+    /** 「收藏」是否可点（点了会跳视频页）；false = 只显示收藏数、不可点，避免误导 */
+    favClickable: false,
 
     /** 评论弹窗默认排序：'hot' 热门（按点赞）/ 'new' 最新（按时间） */
     commentSort: 'hot',
@@ -228,6 +231,9 @@ ${CONFIG.zhihuLayout ? `
 /* 已经点过赞：图标变红 + 实心 */
 .z-actions .z-act.z-liked { color: #f56c6c !important; }
 .z-actions .z-act.z-liked svg path { fill: currentColor; }
+/* 收藏：只当数字看，不可点、不变蓝、不显示手型 */
+.z-actions .z-act.z-static { cursor: default; }
+.z-actions .z-act.z-static:hover { color: inherit !important; }
 .z-act.z-busy { opacity: .55; pointer-events: none; }
 
 /* 轻提示：点赞成功 / 未登录 / 风控 */
@@ -954,6 +960,15 @@ ${CONFIG.zhihuLayout ? `
         };
         a.addEventListener('mouseenter', syncLiked, { once: true });
         a.addEventListener('focus', syncLiked, { once: true });
+      }
+      if (key === 'fav' && !CONFIG.favClickable) {
+        // 收藏没法在卡片里完成，做成不可点的静态数字，避免「点一下就跳视频页」的误导
+        a.removeAttribute('href');
+        a.removeAttribute('target');
+        a.removeAttribute('rel');
+        a.classList.add('z-static');
+        a.title = '收藏数（收藏请进视频页）';
+        a.setAttribute('aria-label', '收藏数');
       }
       acts.appendChild(a);
     });
