@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         哔哩哔哩 - 移除首页视频封面图
 // @namespace    https://www.bilibili.com/
-// @version      2.13.1
-// @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，「简介」「字幕」各带徽章（点「阅读全文」/「展开字幕」就地展开），字幕按原生时间轴一条一行并标出时间点（点时间点直接跳到视频该处），点「评论」弹窗里直接渲染评论（热门/最新、点赞数、表情、子回复），无简介 / 无字幕会提示，底部「点赞」点了就地给视频点赞（再点取消）/「评论」弹窗看评论 /「收藏」只显示数字不可点
+// @version      2.14.0
+// @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，「简介」「字幕」各带徽章（点「阅读全文」/「展开字幕」就地展开，字幕展开后右下角悬浮「收起字幕」，不用滚到末尾），字幕按原生时间轴一条一行并标出时间点（点时间点直接跳到视频该处），点「评论」弹窗里直接渲染评论（热门/最新、点赞数、表情、子回复），无简介 / 无字幕会提示，底部「点赞」点了就地给视频点赞（再点取消）/「评论」弹窗看评论 /「收藏」只显示数字不可点
 // @author       you
 // @match        https://www.bilibili.com/*
 // @match        https://www.bilibili.com
@@ -21,6 +21,7 @@
  *   5. 网络     fetchJSON + 队列限速（并发 2）+ 风控退避（-352/-412 停 30s）+ 点赞提交
  *   6. 简介     view 接口 → 简介 / 标签 / 播放·评论·收藏数
  *   7. 字幕     WBI 签名 → player/wbi/v2 → 字幕 JSON → [[秒, 正文], ...]
+ *             展开后内联「收起」滚出视口时，右下角浮一个「收起字幕」（只服务最后展开的那块）
  *   8. 卡片     标题 +「UP主：」+「简介」+「字幕」+ meta + 操作栏（点赞就地提交）
  *   9. 评论     /x/v2/reply 分页渲染 + 子回复按需加载
  *  10. 启动     IntersectionObserver 懒加载 + MutationObserver 增量扫描
@@ -218,6 +219,21 @@ ${CONFIG.zhihuLayout ? `
 .z-answer .z-sub-t:hover { color: #175199 !important; text-decoration: underline !important; }
 .z-answer .z-sub-c { flex: 1 1 auto; min-width: 0; color: #4a4a4a; }
 .z-answer .z-sub-list .z-sub-more { align-self: flex-start; }
+/* 展开后右下角悬浮的「收起字幕」：字幕太长时不用滚到末尾去点内联的那个 */
+.z-sub-float {
+  position: fixed; right: 22px; bottom: 22px; z-index: 2147482900;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 9px 15px 9px 16px; border-radius: 999px;
+  background: rgba(26, 29, 33, .92); color: #fff !important;
+  font-size: 13px; line-height: 1; white-space: nowrap;
+  cursor: pointer; user-select: none;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .24);
+  opacity: 0; transform: translateY(10px); visibility: hidden; pointer-events: none;
+  transition: opacity .16s ease, transform .16s ease, visibility .16s ease;
+}
+.z-sub-float.z-on { opacity: 1; transform: none; visibility: visible; pointer-events: auto; }
+.z-sub-float:hover { background: rgba(23, 81, 153, .96); }
+.z-sub-float .z-chev { transform: rotate(180deg); }
 
 /* ===== 操作栏：点赞 / 评论 / 收藏 ===== */
 .z-actions { display: flex; align-items: center; gap: 24px; margin-top: 12px; font-size: 13px; line-height: 1.5; color: #8590a6; }
@@ -450,8 +466,11 @@ ${CONFIG.zhihuLayout ? `
       cacheDirty = false;
       cache = trimByTime(cache, 800, 600);
       try {
-        // 字幕正文体积大，单独存，不写进简介缓存
-        localStorage.setItem(CACHE_KEY, JSON.stringify(cache, (k, v) => (k === 'sub' ? undefined : v)));
+        // 字幕正文体积大，单独存，不写进简介缓存；
+        // subTried 只是内存里「别重复抓同一个视频」的标记，写进缓存会让字幕在下次打开时永远显示「暂无字幕」
+        localStorage.setItem(CACHE_KEY, JSON.stringify(cache, (k, v) => (
+          (k === 'sub' || k === 'subTried') ? undefined : v
+        )));
       } catch (e) { /* 存不下就算了 */ }
     }
     if (subDirty) {
@@ -824,6 +843,85 @@ ${CONFIG.zhihuLayout ? `
     return line;
   }
 
+  /* ===== 展开字幕后的「收起」悬浮按钮 =====
+   * 字幕展开后可能几百行，内联「收起」被顶到很下面，得一路滚到底才点得到。
+   * 所以：内联「收起」不在视口里、而字幕块还在视口里时，右下角浮一个「收起字幕」，
+   * 点它＝点内联的那个（并且顺手把字幕块滚回视野中间，别让页面突然跳到别处）。 */
+  let zFloatBtn = null;
+  let zFloatOwner = null;
+  let zFloatIO = null;
+
+  function ensureFloatBtn() {
+    if (zFloatBtn && zFloatBtn.isConnected) return zFloatBtn;
+    const btn = el('span', 'z-sub-float');
+    btn.setAttribute('role', 'button');
+    btn.tabIndex = 0;
+    btn.title = '收起字幕，回到字幕开头';
+    btn.innerHTML = '<span class="z-more-text">收起字幕</span>' + CHEV;
+    const run = (ev) => {
+      if (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+      }
+      const owner = zFloatOwner;
+      if (!owner) return;
+      owner.toggle();
+      // 收起后行数骤减，页面会往上跳，顺手把字幕块拉回视野
+      if (owner.wrap && owner.wrap.isConnected) {
+        try { owner.wrap.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+        catch (e) { owner.wrap.scrollIntoView(); }
+      }
+    };
+    btn.addEventListener('click', run);
+    btn.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') run(ev);
+    });
+    (document.body || document.documentElement).appendChild(btn);
+    zFloatBtn = btn;
+    return btn;
+  }
+
+  function hideFloat() {
+    if (zFloatBtn) zFloatBtn.classList.remove('z-on');
+  }
+
+  /** 解绑悬浮「收起」（内联「收起」被点、或卡片被重渲染时调用） */
+  function releaseFloat(wrap) {
+    if (wrap && zFloatOwner && zFloatOwner.wrap !== wrap) return;
+    if (zFloatIO) {
+      zFloatIO.disconnect();
+      zFloatIO = null;
+    }
+    zFloatOwner = null;
+    hideFloat();
+  }
+
+  /** 挂上悬浮「收起」：同一时刻只服务最后展开的那一个字幕块 */
+  function mountFloat(wrap, more, toggle) {
+    releaseFloat();
+    const btn = ensureFloatBtn();
+    zFloatOwner = { wrap, more, toggle };
+    if (!('IntersectionObserver' in window)) {
+      btn.classList.add('z-on');
+      return;
+    }
+    const seen = new Map();
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((en) => seen.set(en.target, en.isIntersecting));
+      if (!zFloatOwner || zFloatOwner.wrap !== wrap) return;
+      if (!wrap.isConnected || !more.isConnected) {
+        releaseFloat(wrap);
+        return;
+      }
+      // 内联「收起」看得见 → 不用浮；字幕块都滚出视口了 → 浮着也没意义
+      if (seen.get(more) || !seen.get(wrap)) hideFloat();
+      else btn.classList.add('z-on');
+    }, { threshold: 0 });
+    io.observe(wrap);
+    io.observe(more);
+    zFloatIO = io;
+  }
+
   /** 字幕块：原生时间轴一条一行，先露前 N 条，点「展开字幕」把剩下的接着往下排 */
   function buildSubBlock(slot, lines, bvid) {
     if (!slot) return;
@@ -859,6 +957,7 @@ ${CONFIG.zhihuLayout ? `
         if (restNodes) restNodes.forEach((n) => n.remove());
         more.classList.remove('z-open');
         setMoreLabel(more, '展开字幕');
+        releaseFloat(wrap);
         return;
       }
       // 展开：把剩下的行接在后面，不另开面板、不内部滚动
@@ -867,8 +966,12 @@ ${CONFIG.zhihuLayout ? `
       restNodes.forEach((n) => frag.appendChild(n));
       list.insertBefore(frag, more);
       more.classList.add('z-open');
-      if (CONFIG.allowCollapse) setMoreLabel(more, '收起');
-      else more.style.display = 'none';
+      if (CONFIG.allowCollapse) {
+        setMoreLabel(more, '收起');
+        mountFloat(wrap, more, toggle);
+      } else {
+        more.style.display = 'none';
+      }
     };
     more.addEventListener('click', toggle);
     more.addEventListener('keydown', (ev) => {
