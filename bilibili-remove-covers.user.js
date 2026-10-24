@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         哔哩哔哩 - 移除首页视频封面图
 // @namespace    https://www.bilibili.com/
-// @version      2.11.0
-// @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，「简介」「字幕」各带徽章（点「阅读全文」/「展开字幕」就地展开），字幕按原生时间轴一条一行并标出时间点（点时间点直接跳到视频该处），点「评论」弹窗里直接渲染评论（热门/最新、点赞数、表情、子回复），无简介 / 无字幕会提示，底部点赞 / 评论 / 收藏
+// @version      2.12.0
+// @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，「简介」「字幕」各带徽章（点「阅读全文」/「展开字幕」就地展开），字幕按原生时间轴一条一行并标出时间点（点时间点直接跳到视频该处），点「评论」弹窗里直接渲染评论（热门/最新、点赞数、表情、子回复），无简介 / 无字幕会提示，底部「点赞」点了就地给视频点赞（再点取消）/「评论」/「收藏」
 // @author       you
 // @match        https://www.bilibili.com/*
 // @match        https://www.bilibili.com
@@ -18,10 +18,10 @@
  *   2. CSS      一张 <style data-bili-no-cover>，样式全在这里
  *   3. 工具     el / cleanText / clip / fmtNum / fmtTime / escapeHtml / fixUrl
  *   4. 缓存     localStorage：简介 zbili:desc:v4、字幕 zbili:sub:v2
- *   5. 网络     fetchJSON + 队列限速（并发 2）+ 风控退避（-352/-412 停 30s）
+ *   5. 网络     fetchJSON + 队列限速（并发 2）+ 风控退避（-352/-412 停 30s）+ 点赞提交
  *   6. 简介     view 接口 → 简介 / 标签 / 播放·评论·收藏数
  *   7. 字幕     WBI 签名 → player/wbi/v2 → 字幕 JSON → [[秒, 正文], ...]
- *   8. 卡片     标题 +「UP主：」+「简介」+「字幕」+ meta + 操作栏
+ *   8. 卡片     标题 +「UP主：」+「简介」+「字幕」+ meta + 操作栏（点赞就地提交）
  *   9. 评论     /x/v2/reply 分页渲染 + 子回复按需加载
  *  10. 启动     IntersectionObserver 懒加载 + MutationObserver 增量扫描
  * ========================================================================== */
@@ -51,6 +51,9 @@
 
     /** 点「评论」时是在弹窗里看评论区（true），还是直接跳视频页（false） */
     commentModal: true,
+
+    /** 点「点赞」时直接调接口点赞（再点取消），false 则恢复成跳视频页 */
+    likeInPlace: true,
 
     /** 评论弹窗默认排序：'hot' 热门（按点赞）/ 'new' 最新（按时间） */
     commentSort: 'hot',
@@ -222,6 +225,24 @@ ${CONFIG.zhihuLayout ? `
 .z-actions .z-act:hover { color: #175199 !important; }
 .z-actions .z-act svg { flex: none; }
 .z-actions .z-act-num { font-variant-numeric: tabular-nums; }
+/* 已经点过赞：图标变红 + 实心 */
+.z-actions .z-act.z-liked { color: #f56c6c !important; }
+.z-actions .z-act.z-liked svg path { fill: currentColor; }
+.z-act.z-busy { opacity: .55; pointer-events: none; }
+
+/* 轻提示：点赞成功 / 未登录 / 风控 */
+.z-toast {
+  position: fixed; left: 50%; bottom: 46px; transform: translateX(-50%); z-index: 2147483600;
+  max-width: 80vw; padding: 8px 14px; border-radius: 6px;
+  background: rgba(26, 29, 33, .9); color: #fff !important;
+  font-size: 13px; line-height: 1.5; text-align: center;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .22); pointer-events: none;
+  animation: z-toast-in .16s ease-out;
+}
+@keyframes z-toast-in {
+  from { opacity: 0; transform: translate(-50%, 6px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
 
 /* ===== 评论弹窗 ===== */
 .z-mask {
@@ -377,6 +398,21 @@ ${CONFIG.zhihuLayout ? `
     return s.startsWith('http://') ? 'https://' + s.slice(7) : s;
   };
 
+  /** 页面底部飘一句轻提示（点赞成功 / 未登录 / 风控） */
+  let toastTimer = 0;
+  function toast(text) {
+    if (!text) return;
+    let node = document.querySelector('.z-toast');
+    if (!node) {
+      node = el('div', 'z-toast');
+      (document.body || document.documentElement).appendChild(node);
+    }
+    node.textContent = text;
+    node.style.display = '';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { node.style.display = 'none'; }, 2200);
+  }
+
   /* ===================== 4. 缓存 ===================== */
   const CACHE_KEY = 'zbili:desc:v4';
   const TTL = 7 * 24 * 3600 * 1000;
@@ -427,10 +463,24 @@ ${CONFIG.zhihuLayout ? `
   const PLAYER_API = API + '/x/player/wbi/v2?';
   const REPLY_API = API + '/x/v2/reply?';
   const REPLY_SUB_API = API + '/x/v2/reply/reply?';
+  const LIKE_API = API + '/x/web-interface/archive/like'; // POST bvid/like/csrf
+  const HAS_LIKE_API = API + '/x/web-interface/archive/has/like?bvid='; // GET 是否已点赞
   const REPLY_PS = 20;
   const REPLY_SORT = { hot: 1, new: 0 }; // sort=1 按点赞（热门）/ sort=0 按时间（最新）
 
   const fetchJSON = async (url) => (await fetch(url, { credentials: 'include' })).json();
+  /** POST 表单到 api.bilibili.com（点赞用；会自动带上 .bilibili.com 的 Cookie） */
+  const postForm = async (url, data) => (await fetch(url, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(data).toString(),
+  })).json();
+  /** CSRF Token：B 站把 bili_jct 写在 Cookie 里，没有就是没登录 */
+  function getCsrf() {
+    const m = document.cookie.match(/(?:^|;\s*)bili_jct=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
   /** 风控码：-352 风控校验失败 / -412 请求被拦截 */
   const isBlocked = (code) => code === -352 || code === -412;
 
@@ -880,6 +930,31 @@ ${CONFIG.zhihuLayout ? `
           openCommentModal(bvid, title);
         });
       }
+      if (key === 'like' && CONFIG.likeInPlace && bvid) {
+        // 点赞不跳页，就地调接口（需要登录 + Cookie 里的 bili_jct）
+        a.removeAttribute('target');
+        a.setAttribute('role', 'button');
+        a.setAttribute('aria-pressed', 'false');
+        a.title = '点赞';
+        a.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          toggleLike(a, bvid);
+        });
+        // 鼠标扫过时才查一次「是否已点赞」（只查一次，不给每张卡都白打一个请求）
+        const syncLiked = async () => {
+          if (a.dataset.busy === '1' || a.dataset.sync === '1') return;
+          a.dataset.sync = '1';
+          try {
+            const json = await fetchJSON(HAS_LIKE_API + bvid);
+            if (json.code !== 0) return;
+            if (a.dataset.userSet === '1') return; // 用户已经点过了，别拿旧状态盖掉
+            setLiked(a, Number(json.data) === 1);
+          } catch (e) { /* 查不到就当未点赞 */ }
+        };
+        a.addEventListener('mouseenter', syncLiked, { once: true });
+        a.addEventListener('focus', syncLiked, { once: true });
+      }
       acts.appendChild(a);
     });
     return acts;
@@ -890,13 +965,77 @@ ${CONFIG.zhihuLayout ? `
     if (!acts) return;
     if (!stat) { acts.style.display = 'none'; return; }
     const put = (key, val) => {
-      const node = acts.querySelector('.z-act-' + key + ' .z-act-num');
-      if (node) node.textContent = fmtNum(val);
+      const a = acts.querySelector('.z-act-' + key);
+      const node = a && a.querySelector('.z-act-num');
+      if (!node) return;
+      a.dataset.base = String(Number(val) || 0);
+      renderActNum(a);
     };
     put('like', stat.like);
     put('comment', stat.reply);
     put('fav', stat.fav);
     acts.style.display = '';
+  }
+
+  /** 数字 = 服务器给的统计值 + 本地操作带来的增量 */
+  function renderActNum(a) {
+    const node = a.querySelector('.z-act-num');
+    if (!node) return;
+    const base = Number(a.dataset.base || 0);
+    const delta = Number(a.dataset.delta || 0);
+    node.textContent = fmtNum(Math.max(0, base + delta));
+  }
+
+  /**
+   * 点赞态：图标变红实心 + 数字跟着变。
+   * delta 是本次操作给 stat.like 带来的增量（undefined = 只改状态、不动数字）：
+   * B 站统计里已经包含自己那一票，所以「发现已点赞」不能 +1。
+   */
+  function setLiked(a, liked, delta) {
+    a.classList.toggle('z-liked', !!liked);
+    a.setAttribute('aria-pressed', liked ? 'true' : 'false');
+    a.title = liked ? '已点赞，再点一次取消' : '点赞';
+    if (delta !== undefined) a.dataset.delta = String(delta);
+    renderActNum(a);
+  }
+
+  /** 点赞 / 取消点赞：直接调 web 接口（POST archive/like），不跳视频页 */
+  async function toggleLike(a, bvid) {
+    if (a.dataset.busy === '1') return;
+    const csrf = getCsrf();
+    if (!csrf) {
+      toast('请先登录 B 站再点赞');
+      return;
+    }
+    const wasLiked = a.classList.contains('z-liked');
+    const prevDelta = Number(a.dataset.delta || 0);
+    a.dataset.userSet = '1';
+    a.dataset.busy = '1';
+    a.classList.add('z-busy');
+    try {
+      const json = await postForm(LIKE_API, { bvid, like: wasLiked ? 2 : 1, csrf });
+      const code = Number(json && json.code);
+      if (code === 0) {
+        setLiked(a, !wasLiked, prevDelta + (wasLiked ? -1 : 1));
+        toast(wasLiked ? '已取消点赞' : '已点赞');
+        return;
+      }
+      // 65006 重复点赞 / 65004 取消点赞失败：本地状态和服务器不同步，按服务器的结果纠正，数字不动
+      if (code === 65006) { setLiked(a, true); toast('这个视频之前已经点过赞了'); return; }
+      if (code === 65004) { setLiked(a, false); toast('这个视频现在是未点赞状态'); return; }
+      if (code === -101) { toast('请先登录 B 站再点赞'); return; }
+      if (code === -111) { toast('登录状态过期了，刷新页面后再试'); return; }
+      if (isBlocked(code)) { toast('操作太频繁，被 B 站风控了，过一会儿再试'); return; }
+      toast((json && json.message) || '点赞失败，稍后再试');
+    } catch (e) {
+      toast('点赞失败，检查一下网络后重试');
+    } finally {
+      // 留一点冷却，避免连点打太快被风控
+      setTimeout(() => {
+        a.dataset.busy = '0';
+        a.classList.remove('z-busy');
+      }, 600);
+    }
   }
 
   function loadDesc(card) {
