@@ -80,8 +80,11 @@
 卡片底部的「评论」不跳页，弹一个 860×84vh 的对话框，里面 iframe 直接拉视频页（同源，所以能进去摆弄）：
 
 - **只留评论区**：`.left-container > *:not(#commentapp) { display: none }`，播放器 / 标题 / 工具栏 / 简介 / 标签 / 资源列表全部不显示，评论区直接顶到顶。
-- **播放器单独处理**：`#playerWrap` 不能 `display:none`（B 站自己的 `video.js` 会抛 `undefined.style`），改成 `position:absolute; left:-10000px` 挪走，并循环 `video.pause() + muted` 防止弹窗里出声 / 跑流量。
+- **小窗**：播放器一旦“滚出视野”就把自己变成 `position: fixed` 贴到右下角（`.bpx-player-container`，z-index 100000），所以把 `.bpx-player-container` / `.bpx-player-mini-warp` / 弹幕与字幕图层一票元素全部 `display: none`，从第一帧就不会出现小窗。
+- **播放器直接删掉**：评论首帧出现后 `#playerWrap.remove()`，视频流立即断（实测点开 2.8s 后整块消失），不删就一直偷偷拖视频分片。
+  - 时机很关键：**不能提前删**（哪怕 `#commentapp` 已存在），删早了 B 站自己的页面初始化会报错并中止，评论区直接一片空白（实测 0 条）；也不能用 `#playerWrap{display:none}`，会抛 `undefined.style`。
 - **宽度自适应**：视频页本来定宽 1080px（`#mirror-vdcon` 还是 flex），塞进弹窗要把 `#mirror-vdcon` / `.left-container` 改成自适应，并给左栅 `flex: 1 1 100%`，否则评论区只占 659px。
+- **实测**：点开 → 评论首帧 ~3.5s（iframe 首帧 DOM 648ms），之后 `video` 元素 0 个、右下角固定大块 0 个、评论区宽 845px 贴顶；该视频 35 条回复全部拿到、滚到底正常显示「没有更多评论」。
 - **关闭**：右上角 ✕ / Esc / 点遮罩空白处；关掉时整个遮罩（连同 iframe）一起 `remove()`，加载就停、视频也会断。
 - **评论列表**是 `<bili-comments>` + Shadow DOM 异步渲染的，脚本只负责注入样式和“等它出来”（弹「评论区加载中…」，最多盯 20 秒）。
 - 已知：我们把播放器 / 简介等兄弟节点藏掉后，B 站自己的 `video.js` 会在 iframe 里报一条 `Cannot read properties of undefined (reading 'style')`，不影响评论渲染，只在 F12 里看得到。

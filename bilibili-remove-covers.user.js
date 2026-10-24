@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         哔哩哔哩 - 移除首页视频封面图
 // @namespace    https://www.bilibili.com/
-// @version      2.9.0
+// @version      2.9.1
 // @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，「简介」「字幕」各带徽章（点「阅读全文」/「展开字幕」就地展开），字幕按原生时间轴一条一行并标出时间点（点时间点直接跳到视频该处），点「评论」弹窗里用 iframe 看评论区，无简介 / 无字幕会提示，底部点赞 / 评论 / 收藏
 // @author       you
 // @match        https://www.bilibili.com/*
@@ -843,6 +843,11 @@ ${CONFIG.zhihuLayout ? `
   overflow: hidden !important;
   pointer-events: none !important;
 }
+/* 小窗：播放器一旦“滚出视野”就变成 fixed 贴在弹窗右下角，这里直接摁掉 */
+.bpx-player-container, .bpx-player-mini-warp, .bpx-player-context-area,
+.bpx-player-dm-mask-wrap, .bpx-player-row-dm-wrap, .bpx-player-bas-dm-wrap,
+.bpx-player-subtitle-wrap, .bpx-player-new-dialogue-area, .bpx-player-adv-dm-wrap,
+.bas-danmaku, .bili-danmaku-x-dm-rotate, .bpx-player-mini-state { display: none !important; }
 /* 视频页是定宽 1080 的，塞进弹窗要拆成自适应；#mirror-vdcon 是 flex，左栅要占满 */
 .left-container, #mirror-vdcon, .video-container-v1, #app.app-v1 {
   width: auto !important; max-width: none !important; min-width: 0 !important;
@@ -940,6 +945,7 @@ body { background: #fff !important; overflow-x: hidden !important; }
 
     // iframe 同源，可以进去注样式：藏播放器/简介/推荐，只留评论区
     let passes = 0;
+    const startedAt = Date.now();
     const prep = () => {
       let d = null;
       try { d = frame.contentDocument; } catch (e) { d = null; }
@@ -950,16 +956,21 @@ body { background: #fff !important; overflow-x: hidden !important; }
         st.textContent = MODAL_CLEAN_CSS;
         (d.head || d.documentElement).appendChild(st);
       }
-      // 别让弹窗里的播放器跑起来（占流量 / 出声）
+      // 别让弹窗里的播放器跑起来（占流量 / 出声 / 变成右下角小窗）
       d.querySelectorAll('video').forEach((v) => {
         try { v.pause(); v.muted = true; } catch (e) { /* 忽略 */ }
       });
       const app = d.querySelector('#commentapp') || d.querySelector('bili-comments');
       if (!app) return false;
-      // 评论列表是 shadow DOM 异步渲染的，见到第一帧就说明差不多了
+      // 评论列表是 shadow DOM 异步渲染的，看到内容才叫真的好了
       const bc = d.querySelector('bili-comments');
-      const ready = !bc || !bc.shadowRoot || !!bc.shadowRoot.querySelector('bili-comment-thread-renderer, #header');
+      const loaded = !!bc && !!bc.shadowRoot && bc.shadowRoot.childElementCount > 0;
+      const ready = loaded || (Date.now() - startedAt > 5000 && app.childElementCount > 0);
       if (!ready) return false;
+      // 评论出来了，播放器就没用了：整个删掉，视频流也一起断（不然每次都要拖几十 MB）
+      // 注意只能在评论渲染完之后删，删早了 B 站自己的页面初始化会挂，评论区也跟着不出来
+      const pw = d.querySelector('#playerWrap');
+      if (pw) pw.remove();
       if (passes < 3) {
         d.documentElement.scrollTop = 0;
         if (d.body) d.body.scrollTop = 0;
