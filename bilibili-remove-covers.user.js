@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         哔哩哔哩 - 移除首页视频封面图
 // @namespace    https://www.bilibili.com/
-// @version      2.3.0
-// @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，正文=视频简介（点「阅读全文」就地展开），卡片间保留分割线
+// @version      2.4.0
+// @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，正文=视频简介（点「阅读全文」就地展开），底部点赞 / 评论 / 收藏
 // @author       you
 // @match        https://www.bilibili.com/*
 // @match        https://www.bilibili.com
@@ -29,6 +29,9 @@
 
     /** 是否显示 播放 / 弹幕 / 时长 / 发布时间 这一行小字 */
     showMeta: true,
+
+    /** 是否在卡片底部显示「点赞 / 评论 / 收藏」操作栏（点击会打开视频页） */
+    showActions: true,
 
     /** 视频没有简介时显示的占位文字 */
     fallbackDesc: '（该 UP 主没有填写简介）',
@@ -210,6 +213,30 @@ ${CONFIG.zhihuLayout ? `
   color: #99a0a8;
   line-height: 1.5;
 }
+
+/* 底部操作栏：点赞 / 评论 / 收藏（知乎式） */
+.z-actions {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  margin-top: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #8590a6;
+}
+.z-actions .z-act {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: inherit !important;
+  text-decoration: none !important;
+  cursor: pointer;
+  user-select: none;
+  transition: color .15s ease;
+}
+.z-actions .z-act:hover { color: #175199 !important; }
+.z-actions .z-act svg { flex: none; }
+.z-actions .z-act-num { font-variant-numeric: tabular-nums; }
 ` : ''}
 `;
 
@@ -244,7 +271,7 @@ ${CONFIG.zhihuLayout ? `
   }
 
   /* ---------- 3. 简介抓取（带本地缓存 + 队列限速） ---------- */
-  const CACHE_KEY = 'zbili:desc:v2';
+  const CACHE_KEY = 'zbili:desc:v3';
   const TTL = 7 * 24 * 3600 * 1000;
   const VIEW_API = 'https://api.bilibili.com/x/web-interface/view?bvid=';
   const TAG_API = 'https://api.bilibili.com/x/tag/archive/tags?bvid=';
@@ -328,6 +355,7 @@ ${CONFIG.zhihuLayout ? `
       throw new Error('api ' + json.code);
     }
     const d = json.data || {};
+    const st = d.stat || {};
     let desc = rawClean(d.desc || '');
     if (!meaningful(desc) && CONFIG.useDynamicAsDesc) desc = rawClean(d.dynamic || '');
     if (!meaningful(desc)) desc = '';
@@ -343,7 +371,12 @@ ${CONFIG.zhihuLayout ? `
       } catch (e) { /* 忽略 */ }
     }
 
-    const rec = { d: desc, tg: tags, t: Date.now() };
+    const rec = {
+      d: desc,
+      tg: tags,
+      s: { like: st.like || 0, reply: st.reply || 0, fav: st.favorite || 0 },
+      t: Date.now(),
+    };
     cache[bvid] = rec;
     cacheDirty = true;
     return rec;
@@ -351,6 +384,57 @@ ${CONFIG.zhihuLayout ? `
 
   function hitsFresh(rec) {
     return rec && typeof rec === 'object' && Date.now() - rec.t < TTL;
+  }
+
+  /* ---------- 3.5 底部操作栏（点赞 / 评论 / 收藏） ---------- */
+  const ICONS = {
+    // Feather 图标：thumbs-up / message-circle / star
+    like: 'M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3',
+    comment: 'M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z',
+    fav: 'M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z',
+  };
+  const ACT_LABELS = { like: '点赞', comment: '评论', fav: '收藏' };
+
+  const fmtNum = (n) => {
+    n = Number(n) || 0;
+    if (n >= 1e8) return (n / 1e8).toFixed(1).replace(/\.0$/, '') + '亿';
+    if (n >= 1e4) return (n / 1e4).toFixed(1).replace(/\.0$/, '') + '万';
+    return String(n);
+  };
+
+  function buildActions(url) {
+    const acts = document.createElement('div');
+    acts.className = 'z-actions';
+    acts.style.display = 'none'; // 拿到统计数据后再显示，避免占位跳动
+    Object.keys(ICONS).forEach((key) => {
+      const a = document.createElement('a');
+      a.className = 'z-act z-act-' + key;
+      a.href = url;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.title = ACT_LABELS[key] + '（打开视频页）';
+      a.setAttribute('aria-label', ACT_LABELS[key]);
+      a.innerHTML = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"'
+        + ' stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        + '<path d="' + ICONS[key] + '"/></svg>'
+        + '<span class="z-act-num">—</span>';
+      acts.appendChild(a);
+    });
+    return acts;
+  }
+
+  function fillActions(card, stat) {
+    const acts = card.querySelector('.z-actions');
+    if (!acts) return;
+    if (!stat) { acts.style.display = 'none'; return; }
+    const put = (key, val) => {
+      const el = acts.querySelector('.z-act-' + key + ' .z-act-num');
+      if (el) el.textContent = fmtNum(val);
+    };
+    put('like', stat.like);
+    put('comment', stat.reply);
+    put('fav', stat.fav);
+    acts.style.display = '';
   }
 
   /* ---------- 4. 把卡片改造成「标题 + UP主：简介」 ---------- */
@@ -437,6 +521,8 @@ ${CONFIG.zhihuLayout ? `
         descEl.classList.add('z-empty');
         if (moreEl) moreEl.style.display = 'none';
       }
+
+      fillActions(card, rec && rec.s);
     });
   }
 
@@ -511,6 +597,7 @@ ${CONFIG.zhihuLayout ? `
     }
 
     tit.insertAdjacentElement('afterend', box);
+    if (CONFIG.showActions) box.appendChild(buildActions(link ? link.href : href));
     card.dataset.zbBvid = bvid;
     card.dataset.zbState = 'ok';
 

@@ -8,6 +8,7 @@
 - 点 `阅读全文 ⌄` **就地展开**全文，不跳转、不开新标签；展开后变 `收起`
 - 简介本来就没被截断时，不显示「阅读全文」
 - 封面图全部移除（推荐流卡片、顶部大轮播、直播/番剧楼层小卡、信息流里的直播卡、骨架占位）
+- 卡片底部一行「👍 点赞 · 💬 评论 · ⭐ 收藏」（图标 + 数量，1.2万/亿 自动缩写），点击打开视频页
 - 居中单列 760px、白底卡片 + 1px 分割线、浅灰页面底色
 
 ## 文件
@@ -39,6 +40,7 @@ python -m http.server 8765 --bind 127.0.0.1
 | `descMaxChars` | `200` | 简介预览字数，也是「是否出现阅读全文」的阈值 |
 | `allowCollapse` | `true` | 展开后是否显示「收起」 |
 | `showMeta` | `true` | 底部「播放 · 弹幕 · 时长 · 时间」小字 |
+| `showActions` | `true` | 卡片底部「点赞 / 评论 / 收藏」操作栏（数量来自 view 接口） |
 | `tagsAsFallback` | `true` | 简介/动态为空时用视频标签充当正文 |
 | `useDynamicAsDesc` | `true` | 简介为空时用 UP 主的视频动态文字 |
 | `fallbackDesc` | `（该 UP 主没有填写简介）` | 标签也没有时的占位文字 |
@@ -54,7 +56,8 @@ python -m http.server 8765 --bind 127.0.0.1
 - **卡片节奏**：B 站每张卡外面还套了一层 `.feed-card`，所以每张卡都是自己父节点的 `:last-child`；分割线不能靠 `:last-child` 判断，改为在容器层级去掉最后一张。外层 wrapper 自带的 24~40px 间距也统一压平，卡片之间只留 1px 分割线。
 - **非投稿卡**：番剧 / 活动 / 广告 / 直播卡链接里没有 `BV` 号，封面藏掉后只会剩一块空白，直接标 `.z-skip` 不显示。
 - **简介数据**：`/x/web-interface/view?bvid=` 取 `desc`（空则退 `dynamic`，再空则 `/x/tag/archive/tags` 取标签）。
-  - 结果缓存在 `localStorage`（键 `zbili:desc:v2`，TTL 7 天）
+  - 同一个响应里的 `stat.like / stat.reply / stat.favorite` 直接用于底部操作栏，不额外请求
+  - 结果缓存在 `localStorage`（键 `zbili:desc:v3`，TTL 7 天）
   - 首屏外卡片由 `IntersectionObserver` 懒加载，队列 2 并发 + 错峰 200ms
   - 命中风控（-352 / -412）自动暂停 30 秒，期间卡片退化为占位文字
 - **DOM 兜底**：`MutationObserver` 监听新增节点，Vue 重渲染后自动补回 `.z-answer`。
