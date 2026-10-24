@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         哔哩哔哩 - 移除首页视频封面图
 // @namespace    https://www.bilibili.com/
-// @version      2.4.0
-// @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，正文=视频简介（点「阅读全文」就地展开），底部点赞 / 评论 / 收藏
+// @version      2.5.0
+// @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，正文=视频简介 + 字幕文稿（点「阅读全文」就地展开），底部点赞 / 评论 / 收藏
 // @author       you
 // @match        https://www.bilibili.com/*
 // @match        https://www.bilibili.com
 // @run-at       document-start
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @connect      aisubtitle.hdslb.com
 // ==/UserScript==
 
 (function () {
@@ -41,6 +42,19 @@
 
     /** 简介和动态都为空时，是否改用视频标签（如 "标签：游戏 · 实况"） */
     tagsAsFallback: true,
+
+    /** 字幕（视频文稿）用法：
+     *  'always' = 简介后面总是追加字幕内容（没有简介时字幕直接当正文）
+     *  'noDesc' = 只有没有简介时才用字幕顶替（更省流量）
+     *  'off'    = 完全不抓字幕
+     */
+    subtitleMode: 'always',
+
+    /** 字幕预览多少个字，超出才出现「展开字幕」 */
+    subtitleMaxChars: 160,
+
+    /** 展开后字幕面板的最大高度（px），超出内部滚动 */
+    subtitlePanelHeight: 360,
 
     /** 是否隐藏首页的「分区楼层卡」（直播 / 番剧那些小卡片） */
     hideFloorCards: true,
@@ -214,6 +228,45 @@ ${CONFIG.zhihuLayout ? `
   line-height: 1.5;
 }
 
+/* 字幕（视频文稿） */
+.z-answer .z-sub-slot:empty { display: none !important; }
+.z-answer .z-sub {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed #e9edf1;
+  font-size: 14.5px;
+  line-height: 1.75;
+  color: #4a4a4a;
+}
+.z-answer .z-sub-label {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 5px;
+  border-radius: 2px;
+  background: #eef2f6;
+  color: #6b7a8c;
+  font-size: 12px;
+  line-height: 18px;
+  vertical-align: 1px;
+  user-select: none;
+}
+.z-answer .z-sub-text { color: #4a4a4a !important; }
+.z-answer .z-sub-panel {
+  margin-top: 8px;
+  padding: 10px 12px;
+  max-height: ${CONFIG.subtitlePanelHeight}px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: #fafbfc;
+  border: 1px solid #eef1f4;
+  border-radius: 3px;
+  white-space: pre-wrap;
+  font-size: 14px;
+  line-height: 1.9;
+  color: #4a4a4a;
+  scrollbar-width: thin;
+}
+
 /* 底部操作栏：点赞 / 评论 / 收藏（知乎式） */
 .z-actions {
   display: flex;
@@ -271,7 +324,7 @@ ${CONFIG.zhihuLayout ? `
   }
 
   /* ---------- 3. 简介抓取（带本地缓存 + 队列限速） ---------- */
-  const CACHE_KEY = 'zbili:desc:v3';
+  const CACHE_KEY = 'zbili:desc:v4';
   const TTL = 7 * 24 * 3600 * 1000;
   const VIEW_API = 'https://api.bilibili.com/x/web-interface/view?bvid=';
   const TAG_API = 'https://api.bilibili.com/x/tag/archive/tags?bvid=';
@@ -289,7 +342,8 @@ ${CONFIG.zhihuLayout ? `
         list.sort((a, b) => b[1].t - a[1].t);
         cache = Object.fromEntries(list.slice(0, 600));
       }
-      localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
+      // 字幕正文体积大，单独存在 zbili:sub 里，不要写进简介缓存
+      localStorage.setItem(CACHE_KEY, JSON.stringify(cache, (k, v) => (k === 'sub' ? undefined : v)));
     } catch (e) { /* 忽略 */ }
   }
   setInterval(saveCache, 20000);
@@ -345,7 +399,7 @@ ${CONFIG.zhihuLayout ? `
 
   async function fetchDesc(bvid) {
     const hit = cache[bvid];
-    if (hit && hitsFresh(hit)) return hit;
+    if (hit && hitsFresh(hit)) return ensureSubtitle(hit);
 
     await sleep(200); // 轻微错峰，降低风控概率
     const res = await fetch(VIEW_API + bvid, { credentials: 'include' });
@@ -371,19 +425,230 @@ ${CONFIG.zhihuLayout ? `
       } catch (e) { /* 忽略 */ }
     }
 
+    const cid = d.cid || (d.pages && d.pages[0] && d.pages[0].cid) || 0;
     const rec = {
       d: desc,
       tg: tags,
       s: { like: st.like || 0, reply: st.reply || 0, fav: st.favorite || 0 },
+      aid: d.aid || 0,
+      cid,
       t: Date.now(),
     };
     cache[bvid] = rec;
     cacheDirty = true;
-    return rec;
+    return ensureSubtitle(rec);
   }
 
   function hitsFresh(rec) {
     return rec && typeof rec === 'object' && Date.now() - rec.t < TTL;
+  }
+
+  /* ---------- 3.6 字幕（视频文稿）抓取 ---------- */
+  const SUB_KEY = 'zbili:sub:v1';
+  const SUB_TTL = 3 * 24 * 3600 * 1000;
+  const SUB_MAX_ENTRIES = 30;
+  const PLAYER_API = 'https://api.bilibili.com/x/player/wbi/v2?';
+
+  let subCache = {};
+  try { subCache = JSON.parse(localStorage.getItem(SUB_KEY) || '{}') || {}; } catch (e) { subCache = {}; }
+  let subDirty = false;
+
+  function saveSubCache() {
+    if (!subDirty) return;
+    subDirty = false;
+    try {
+      const list = Object.entries(subCache);
+      if (list.length > SUB_MAX_ENTRIES) {
+        list.sort((a, b) => b[1].t - a[1].t);
+        subCache = Object.fromEntries(list.slice(0, SUB_MAX_ENTRIES));
+      }
+      localStorage.setItem(SUB_KEY, JSON.stringify(subCache));
+    } catch (e) { /* 忽略 */ }
+  }
+  setInterval(saveSubCache, 20000);
+
+  /** 是否需要抓字幕（按 subtitleMode 配置判断） */
+  function subtitleNeeded(desc) {
+    if (!CONFIG.subtitleMode || CONFIG.subtitleMode === 'off') return false;
+    if (CONFIG.subtitleMode === 'noDesc') return !desc;
+    return true;
+  }
+
+  /** 补字幕：结果只挂在内存对象上，不进简介缓存 */
+  async function ensureSubtitle(rec) {
+    if (!rec || rec.sub) return rec;
+    if (!subtitleNeeded(rec.d)) return rec;
+    try {
+      const text = await fetchSubtitleText(rec.aid, rec.cid);
+      if (text) rec.sub = text;
+    } catch (e) { /* 拿不到就当没字幕 */ }
+    return rec;
+  }
+
+  /* --- WBI 签名（B 站接口 2023 年起必须的 w_rid / wts） --- */
+  const WBI_TAB = [46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49,
+    33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1,
+    60, 51, 30, 4, 22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52];
+
+  function md5(str) {
+    const S = [7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+      5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
+      4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+      6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21];
+    const K = [];
+    for (let i = 0; i < 64; i++) K[i] = Math.floor(Math.abs(Math.sin(i + 1)) * 4294967296) | 0;
+    const bytes = unescape(encodeURIComponent(str));
+    const n = bytes.length;
+    const w = [];
+    for (let i = 0; i < n; i++) w[i >> 2] = (w[i >> 2] || 0) | (bytes.charCodeAt(i) << ((i % 4) * 8));
+    w[n >> 2] = (w[n >> 2] || 0) | (0x80 << ((n % 4) * 8));
+    w[(((n + 8) >> 6) + 1) * 16 - 2] = n * 8;
+    let a0 = 0x67452301;
+    let b0 = 0xefcdab89;
+    let c0 = 0x98badcfe;
+    let d0 = 0x10325476;
+    const add = (x, y) => {
+      const lo = (x & 0xffff) + (y & 0xffff);
+      const hi = (x >> 16) + (y >> 16) + (lo >> 16);
+      return (hi << 16) | (lo & 0xffff);
+    };
+    const rol = (x, c) => (x << c) | (x >>> (32 - c));
+    for (let i = 0; i < w.length; i += 16) {
+      let a = a0;
+      let b = b0;
+      let c = c0;
+      let d = d0;
+      for (let j = 0; j < 64; j++) {
+        let f;
+        let g;
+        if (j < 16) { f = (b & c) | (~b & d); g = j; }
+        else if (j < 32) { f = (d & b) | (~d & c); g = (5 * j + 1) % 16; }
+        else if (j < 48) { f = b ^ c ^ d; g = (3 * j + 5) % 16; }
+        else { f = c ^ (b | ~d); g = (7 * j) % 16; }
+        const tmp = d;
+        d = c;
+        c = b;
+        b = add(b, rol(add(add(a, f), add(K[j], w[i + g] || 0)), S[j]));
+        a = tmp;
+      }
+      a0 = add(a0, a);
+      b0 = add(b0, b);
+      c0 = add(c0, c);
+      d0 = add(d0, d);
+    }
+    const hex = (x) => {
+      let out = '';
+      for (let i = 0; i < 4; i++) out += ((x >> (i * 8)) & 0xff).toString(16).padStart(2, '0');
+      return out;
+    };
+    return hex(a0) + hex(b0) + hex(c0) + hex(d0);
+  }
+
+  let mixinKey = '';
+  async function getMixinKey() {
+    if (mixinKey) return mixinKey;
+    const nav = await (await fetch('https://api.bilibili.com/x/web-interface/nav', { credentials: 'include' })).json();
+    const img = nav && nav.data && nav.data.wbi_img;
+    if (!img || !img.img_url || !img.sub_url) return '';
+    const raw = img.img_url.split('/').pop().split('.')[0] + img.sub_url.split('/').pop().split('.')[0];
+    mixinKey = WBI_TAB.map((i) => raw[i]).join('').slice(0, 32);
+    return mixinKey;
+  }
+
+  async function wbiSign(params) {
+    const mixin = await getMixinKey();
+    if (!mixin) return '';
+    const all = Object.assign({}, params, { wts: Math.round(Date.now() / 1000) });
+    const q = Object.keys(all).sort().map((k) => (
+      encodeURIComponent(k) + '=' + encodeURIComponent(String(all[k]).replace(/[!'()*]/g, ''))
+    )).join('&');
+    return q + '&w_rid=' + md5(q + mixin);
+  }
+
+  /** 字幕文件在 aisubtitle.hdslb.com，普通 fetch 会被 CORS 拦，走 GM_xmlhttpRequest */
+  function gmGetText(url) {
+    const gm = (typeof GM_xmlhttpRequest === 'function')
+      ? GM_xmlhttpRequest
+      : (typeof GM !== 'undefined' && GM && typeof GM.xmlHttpRequest === 'function' ? GM.xmlHttpRequest : null);
+    if (gm) {
+      return new Promise((resolve, reject) => {
+        gm({
+          method: 'GET',
+          url,
+          timeout: 20000,
+          onload: (r) => resolve(r.responseText || ''),
+          onerror: () => reject(new Error('gm error')),
+          ontimeout: () => reject(new Error('gm timeout')),
+        });
+      });
+    }
+    // 没有脚本管理器（GM）时只能退回 fetch，跨域大概率失败
+    return fetch(url, { credentials: 'include' }).then((r) => r.text());
+  }
+
+  function pickSubtitle(list) {
+    if (!list || !list.length) return null;
+    const usable = list.filter((s) => s && s.subtitle_url);
+    if (!usable.length) return null;
+    const byLan = (re) => usable.find((s) => re.test(s.lan || ''));
+    return byLan(/^(zh-CN|zh-Hans|zh)$/i)
+      || byLan(/^ai-zh/i)
+      || byLan(/^zh/i)
+      || usable[0];
+  }
+
+  /** 字幕 JSON -> 正文：AI 字幕没标点、2~3 秒一句，每 ~60 字分一段，长停顿另起一段 */
+  function subtitleToText(body) {
+    const segs = [];
+    for (const seg of body || []) {
+      const c = cleanText(seg && seg.content);
+      if (!c) continue;
+      // 过滤 "♪ 音乐 ♪" 这类占位
+      if (/^[♪♫🎵🎶\s]*(音乐|music)?[♪♫🎵🎶\s]*$/i.test(c)) continue;
+      segs.push({ c, from: Number(seg.from) || 0, to: Number(seg.to) || 0 });
+    }
+    const paras = [];
+    let buf = '';
+    let prevTo = null;
+    for (const s of segs) {
+      if (prevTo !== null && s.from - prevTo > 1.5 && buf) { paras.push(buf); buf = ''; }
+      if (buf && /[A-Za-z0-9]$/.test(buf) && /^[A-Za-z0-9]/.test(s.c)) buf += ' ';
+      buf += s.c;
+      if (buf.length >= 60) { paras.push(buf); buf = ''; }
+      prevTo = s.to;
+    }
+    if (buf) paras.push(buf);
+    return paras.join('\n');
+  }
+
+  async function fetchSubtitleText(aid, cid) {
+    if (!aid || !cid) return '';
+    const key = aid + '_' + cid;
+    const hit = subCache[key];
+    if (hit && typeof hit.x === 'string' && Date.now() - hit.t < SUB_TTL) return hit.x;
+
+    const qs = await wbiSign({ aid, cid });
+    if (!qs) return '';
+    await sleep(120);
+    const json = await (await fetch(PLAYER_API + qs, { credentials: 'include' })).json();
+    if (json.code !== 0) {
+      if (json.code === -352 || json.code === -412) blockApi();
+      return '';
+    }
+    const sub = pickSubtitle(json.data && json.data.subtitle && json.data.subtitle.subtitles);
+    if (!sub) return '';
+    const url = sub.subtitle_url.startsWith('//') ? 'https:' + sub.subtitle_url : sub.subtitle_url;
+
+    let raw = '';
+    try { raw = await gmGetText(url); } catch (e) { return ''; }
+    let body = [];
+    try { body = (JSON.parse(raw).body) || []; } catch (e) { return ''; }
+    const text = subtitleToText(body).slice(0, 60000);
+    if (!text) return '';
+
+    subCache[key] = { x: text, t: Date.now() };
+    subDirty = true;
+    return text;
   }
 
   /* ---------- 3.5 底部操作栏（点赞 / 评论 / 收藏） ---------- */
@@ -449,6 +714,93 @@ ${CONFIG.zhihuLayout ? `
     else moreEl.textContent = label;
   }
 
+  const CHEV = '<svg class="z-chev" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">'
+    + '<path d="M4 6.5L8 10.5L12 6.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+  /* ---- 字幕块：预览 + 「展开字幕」+ 可滚动文稿面板 ---- */
+  function bindPanelToggle(slot, moreEl, fullText) {
+    if (!slot) return;
+    let panel = null;
+    const toggle = (ev) => {
+      if (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+      }
+      if (panel) {
+        panel.remove();
+        panel = null;
+        moreEl.classList.remove('z-open');
+        setMoreLabel(moreEl, '展开字幕');
+        return;
+      }
+      panel = document.createElement('div');
+      panel.className = 'z-sub-panel';
+      panel.textContent = fullText;
+      slot.appendChild(panel);
+      moreEl.classList.add('z-open');
+      setMoreLabel(moreEl, '收起');
+    };
+    moreEl.addEventListener('click', toggle);
+    moreEl.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') toggle(ev);
+    });
+  }
+
+  function makeSubMore() {
+    const more = document.createElement('span');
+    more.className = 'z-more z-sub-more';
+    more.setAttribute('role', 'button');
+    more.tabIndex = 0;
+    more.innerHTML = '<span class="z-more-text">展开字幕</span>' + CHEV;
+    return more;
+  }
+
+  /** 有简介时：在简介下面接一块「字幕：…」 */
+  function buildSubBlock(slot, text) {
+    if (!slot || slot.querySelector('.z-sub')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'z-sub';
+
+    const label = document.createElement('span');
+    label.className = 'z-sub-label';
+    label.textContent = '字幕';
+
+    const preview = document.createElement('span');
+    preview.className = 'z-sub-text';
+    preview.textContent = clip(text, CONFIG.subtitleMaxChars);
+
+    wrap.appendChild(label);
+    wrap.appendChild(preview);
+
+    if (oneLine(text).length > CONFIG.subtitleMaxChars) {
+      const more = makeSubMore();
+      wrap.appendChild(more);
+      bindPanelToggle(slot, more, text);
+    }
+    slot.appendChild(wrap);
+  }
+
+  /** 没有简介时：字幕直接当正文（预览跟在 UP主： 后面） */
+  function subtitleAsBody(box, descEl, moreEl, slot, text) {
+    const preview = clip(text, CONFIG.subtitleMaxChars);
+    descEl.textContent = preview;
+    descEl.dataset.preview = preview;
+    descEl.classList.add('z-sub-body');
+
+    const label = document.createElement('span');
+    label.className = 'z-sub-label';
+    label.textContent = '字幕';
+    box.insertBefore(label, descEl);
+
+    if (oneLine(text).length > CONFIG.subtitleMaxChars && moreEl) {
+      moreEl.style.display = '';
+      setMoreLabel(moreEl, '展开字幕');
+      bindPanelToggle(slot, moreEl, text);
+    } else if (moreEl) {
+      moreEl.style.display = 'none';
+    }
+  }
+
   function bindExpand(descEl, moreEl, fullText) {
     const toggle = (ev) => {
       ev.preventDefault();
@@ -496,6 +848,8 @@ ${CONFIG.zhihuLayout ? `
       descEl.classList.remove('z-pending');
       const full = rec && typeof rec === 'object' ? (rec.d || '') : (rec || '');
       const tags = (rec && rec.tg) || [];
+      const sub = (rec && rec.sub) || '';
+      const slot = box.querySelector('.z-sub-slot');
 
       if (full) {
         const preview = clip(full, CONFIG.descMaxChars);
@@ -512,6 +866,11 @@ ${CONFIG.zhihuLayout ? `
         } else if (moreEl) {
           moreEl.style.display = 'none';
         }
+        // 简介后面接字幕内容
+        if (sub && CONFIG.subtitleMode !== 'off') buildSubBlock(slot, sub);
+      } else if (sub && CONFIG.subtitleMode !== 'off') {
+        // 没有简介 → 字幕直接顶替正文
+        subtitleAsBody(box, descEl, moreEl, slot, sub);
       } else if (tags.length) {
         descEl.textContent = '标签：' + tags.join(' · ');
         descEl.classList.add('z-tags');
@@ -576,10 +935,13 @@ ${CONFIG.zhihuLayout ? `
     moreEl.setAttribute('role', 'button');
     moreEl.tabIndex = 0;
     moreEl.style.display = 'none'; // 默认不显示，只有简介被截断时才出现
-    moreEl.innerHTML = '<span class="z-more-text">阅读全文</span>'
-      + '<svg class="z-chev" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">'
-      + '<path d="M4 6.5L8 10.5L12 6.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    moreEl.innerHTML = '<span class="z-more-text">阅读全文</span>' + CHEV;
     box.appendChild(moreEl);
+
+    // 字幕面板的容器（跟在正文后面、meta 前面）
+    const slot = document.createElement('div');
+    slot.className = 'z-sub-slot';
+    box.appendChild(slot);
 
     if (CONFIG.showMeta) {
       const bits = [];
