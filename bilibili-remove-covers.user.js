@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         哔哩哔哩 - 移除首页视频封面图
 // @namespace    https://www.bilibili.com/
-// @version      2.7.0
-// @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，「简介」「字幕」各带徽章（点「阅读全文」/「展开字幕」就地展开），字幕一段一行、展开后就地续排，无简介 / 无字幕会提示，底部点赞 / 评论 / 收藏
+// @version      2.8.0
+// @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，「简介」「字幕」各带徽章（点「阅读全文」/「展开字幕」就地展开），字幕按原生时间轴一条一行并标出时间点（点时间点直接跳到视频该处），无简介 / 无字幕会提示，底部点赞 / 评论 / 收藏
 // @author       you
 // @match        https://www.bilibili.com/*
 // @match        https://www.bilibili.com
@@ -50,8 +50,17 @@
      */
     subtitleMode: 'always',
 
-    /** 字幕预览几行（字幕按段落一行一行排），剩下的点「展开字幕」接着往下排 */
+    /** 字幕预览几行（字幕一条一行），剩下的点「展开字幕」接着往下排 */
     subtitlePreviewLines: 3,
+
+    /** 字幕怎么分行：
+     *  true  = 直接用 B 站原生时间轴，一条字幕一行（默认，碎但断点一定在语义边界上）
+     *  false = 老的「攒够 60 字才换行」合并法（行更长，但行数少）
+     */
+    subtitleByTimeline: true,
+
+    /** 是否在每条字幕前面显示时间点（可点击跳到视频对应位置） */
+    showSubTime: true,
 
     /** 是否隐藏首页的「分区楼层卡」（直播 / 番剧那些小卡片） */
     hideFloorCards: true,
@@ -251,6 +260,37 @@ ${CONFIG.zhihuLayout ? `
   color: #4a4a4a;
 }
 .z-answer .z-sub-text { color: #4a4a4a !important; white-space: pre-line; }
+/* 一条字幕一行：徽章在左，右边是「时间点 + 正文」 */
+.z-answer .z-sub.z-sub-lines {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.z-answer .z-sub-lines > .z-label { flex: none; margin-top: 4px; }
+.z-answer .z-sub-list {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.z-answer .z-sub-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  line-height: 1.75;
+}
+.z-answer .z-sub-t {
+  flex: none;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: #99a0a8 !important;
+  text-decoration: none !important;
+  cursor: pointer;
+}
+.z-answer .z-sub-t:hover { color: #175199 !important; text-decoration: underline !important; }
+.z-answer .z-sub-list .z-sub-more { align-self: flex-start; }
+
+.z-answer .z-sub-c { flex: 1 1 auto; min-width: 0; color: #4a4a4a; }
 /* 「暂无字幕」「该 UP 主没有填写简介」这类提示 */
 .z-answer .z-desc.z-hint,
 .z-answer .z-sub-text.z-hint { color: #9aa4af !important; font-style: italic; }
@@ -432,13 +472,15 @@ ${CONFIG.zhihuLayout ? `
   }
 
   /* ---------- 3.6 字幕（视频文稿）抓取 ---------- */
-  const SUB_KEY = 'zbili:sub:v1';
+  const SUB_KEY = 'zbili:sub:v2';
   const SUB_TTL = 3 * 24 * 3600 * 1000;
   const SUB_MAX_ENTRIES = 30;
   const PLAYER_API = 'https://api.bilibili.com/x/player/wbi/v2?';
 
   let subCache = {};
   try { subCache = JSON.parse(localStorage.getItem(SUB_KEY) || '{}') || {}; } catch (e) { subCache = {}; }
+  // v1 存的是 60 字合并后的长文本（无时间轴），已不再使用，且体积很大，直接清掉
+  try { localStorage.removeItem('zbili:sub:v1'); } catch (e) { /* 忽略 */ }
   let subDirty = false;
 
   function saveSubCache() {
@@ -464,11 +506,12 @@ ${CONFIG.zhihuLayout ? `
 
   /** 补字幕：结果只挂在内存对象上，不进简介缓存 */
   async function ensureSubtitle(rec) {
-    if (!rec || rec.sub) return rec;
+    if (!rec || rec.sub || rec.subTried) return rec;
+    rec.subTried = true;
     if (!subtitleNeeded(rec.d)) return rec;
     try {
-      const text = await fetchSubtitleText(rec.aid, rec.cid);
-      if (text) rec.sub = text;
+      const lines = await fetchSubtitleLines(rec.aid, rec.cid);
+      if (lines && lines.length) rec.sub = lines;
     } catch (e) { /* 拿不到就当没字幕 */ }
     return rec;
   }
@@ -585,8 +628,13 @@ ${CONFIG.zhihuLayout ? `
       || usable[0];
   }
 
-  /** 字幕 JSON -> 正文：AI 字幕没标点、2~3 秒一句，每 ~60 字分一段，长停顿另起一段 */
-  function subtitleToText(body) {
+  const SUB_MAX_LINES = 1200;   // 单视频最多保留多少条字幕（长直播文稿会非常多）
+  const SUB_MAX_CHARS = 60000;
+
+  /** 字幕 JSON -> [[开始秒数, 正文], ...]
+   *  默认直接吃 B 站原生时间轴：一条字幕一行（AI 文稿一条 ~10 字，碎但断点可靠）
+   *  subtitleByTimeline = false 时退回老的「攒够 60 字 / 停顿 >1.5s 才换行」合并法 */
+  function subtitleToLines(body) {
     const segs = [];
     for (const seg of body || []) {
       const c = cleanText(seg && seg.content);
@@ -595,48 +643,84 @@ ${CONFIG.zhihuLayout ? `
       if (/^[♪♫🎵🎶\s]*(音乐|music)?[♪♫🎵🎶\s]*$/i.test(c)) continue;
       segs.push({ c, from: Number(seg.from) || 0, to: Number(seg.to) || 0 });
     }
-    const paras = [];
+
+    const lines = [];
+    let total = 0;
+    const push = (from, c) => {
+      if (!c) return false;
+      // 相邻完全重复的条目（同一句被切两遍）只留一条
+      const last = lines[lines.length - 1];
+      if (last && last[1] === c && from - last[0] <= 1) return true;
+      lines.push([Math.max(0, Math.round(from)), c]);
+      total += c.length;
+      return lines.length < SUB_MAX_LINES && total < SUB_MAX_CHARS;
+    };
+
+    if (CONFIG.subtitleByTimeline) {
+      for (const s of segs) if (!push(s.from, s.c)) break;
+      return lines;
+    }
+
+    // 老的合并法：一段一行，长的（60 字）或长停顿（1.5s）才断开
     let buf = '';
+    let bufFrom = 0;
     let prevTo = null;
     for (const s of segs) {
-      if (prevTo !== null && s.from - prevTo > 1.5 && buf) { paras.push(buf); buf = ''; }
+      if (prevTo !== null && s.from - prevTo > 1.5 && buf) {
+        if (!push(bufFrom, buf)) return lines;
+        buf = '';
+      }
+      if (!buf) bufFrom = s.from;
       if (buf && /[A-Za-z0-9]$/.test(buf) && /^[A-Za-z0-9]/.test(s.c)) buf += ' ';
       buf += s.c;
-      if (buf.length >= 60) { paras.push(buf); buf = ''; }
+      if (buf.length >= 60) {
+        if (!push(bufFrom, buf)) return lines;
+        buf = '';
+      }
       prevTo = s.to;
     }
-    if (buf) paras.push(buf);
-    return paras.join('\n');
+    if (buf) push(bufFrom, buf);
+    return lines;
   }
 
-  async function fetchSubtitleText(aid, cid) {
-    if (!aid || !cid) return '';
+  /** 秒 -> 00:12 / 1:02:03 */
+  function fmtTime(sec) {
+    const s = Math.max(0, Math.floor(Number(sec) || 0));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const r = s % 60;
+    const p2 = (n) => String(n).padStart(2, '0');
+    return h ? `${h}:${p2(m)}:${p2(r)}` : `${p2(m)}:${p2(r)}`;
+  }
+
+  async function fetchSubtitleLines(aid, cid) {
+    if (!aid || !cid) return [];
     const key = aid + '_' + cid;
     const hit = subCache[key];
-    if (hit && typeof hit.x === 'string' && Date.now() - hit.t < SUB_TTL) return hit.x;
+    if (hit && Array.isArray(hit.l) && Date.now() - hit.t < SUB_TTL) return hit.l;
 
     const qs = await wbiSign({ aid, cid });
-    if (!qs) return '';
+    if (!qs) return [];
     await sleep(120);
     const json = await (await fetch(PLAYER_API + qs, { credentials: 'include' })).json();
     if (json.code !== 0) {
       if (json.code === -352 || json.code === -412) blockApi();
-      return '';
+      return [];
     }
     const sub = pickSubtitle(json.data && json.data.subtitle && json.data.subtitle.subtitles);
-    if (!sub) return '';
+    if (!sub) return [];
     const url = sub.subtitle_url.startsWith('//') ? 'https:' + sub.subtitle_url : sub.subtitle_url;
 
     let raw = '';
-    try { raw = await gmGetText(url); } catch (e) { return ''; }
+    try { raw = await gmGetText(url); } catch (e) { return []; }
     let body = [];
-    try { body = (JSON.parse(raw).body) || []; } catch (e) { return ''; }
-    const text = subtitleToText(body).slice(0, 60000);
-    if (!text) return '';
+    try { body = (JSON.parse(raw).body) || []; } catch (e) { return []; }
+    const lines = subtitleToLines(body);
+    if (!lines.length) return [];
 
-    subCache[key] = { x: text, t: Date.now() };
+    subCache[key] = { l: lines, t: Date.now() };
     subDirty = true;
-    return text;
+    return lines;
   }
 
   /* ---------- 3.5 底部操作栏（点赞 / 评论 / 收藏） ---------- */
@@ -726,42 +810,76 @@ ${CONFIG.zhihuLayout ? `
     if (el && el.textContent !== text) el.textContent = text;
   }
 
-  /** 字幕块：字幕一段一行，先露前 N 行，点「展开字幕」从断的地方接着往下排 */
-  function buildSubBlock(slot, text) {
+  /** 时间点：显示 00:12，点击直接跳到视频的那一秒 */
+  function subTimeLink(sec, bvid) {
+    const at = Math.max(0, Math.floor(Number(sec) || 0));
+    const a = document.createElement('a');
+    a.className = 'z-sub-t';
+    a.textContent = fmtTime(at);
+    a.title = '从 ' + fmtTime(at) + ' 开始播放';
+    if (bvid) a.href = 'https://www.bilibili.com/video/' + bvid + '?t=' + at;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    // 卡片自己也是链接，别把点击冒泡上去
+    a.addEventListener('click', (ev) => ev.stopPropagation());
+    return a;
+  }
+
+  function makeSubLine(item, bvid) {
+    const line = document.createElement('div');
+    line.className = 'z-sub-line';
+    if (CONFIG.showSubTime) line.appendChild(subTimeLink(item[0], bvid));
+    const c = document.createElement('span');
+    c.className = 'z-sub-c';
+    c.textContent = String(item[1] || '');
+    line.appendChild(c);
+    return line;
+  }
+
+  /** 字幕块：B 站原生时间轴一条一行，先露前 N 条，点「展开字幕」把剩下的接着往下排 */
+  function buildSubBlock(slot, lines, bvid) {
     if (!slot) return;
     slot.textContent = '';
+    const items = (Array.isArray(lines) ? lines : [])
+      .map((it) => (Array.isArray(it) ? [Number(it[0]) || 0, String(it[1] || '').trim()] : null))
+      .filter((it) => it && it[1]);
+    if (!items.length) return;
+
     const wrap = document.createElement('div');
-    wrap.className = 'z-sub z-row';
+    wrap.className = 'z-sub z-sub-lines';
     wrap.appendChild(makeLabel('字幕'));
 
-    const lines = String(text || '').split('\n').map((s) => s.trim()).filter(Boolean);
-    if (!lines.length) return;
+    const list = document.createElement('div');
+    list.className = 'z-sub-list';
+    wrap.appendChild(list);
 
-    const maxLines = CONFIG.subtitlePreviewLines > 0 ? CONFIG.subtitlePreviewLines : lines.length;
-    const head = lines.slice(0, maxLines);
-    const rest = lines.slice(maxLines);
-
-    const body = document.createElement('span');
-    body.className = 'z-sub-text';
-    body.textContent = head.join('\n');
-    wrap.appendChild(body);
+    const maxLines = CONFIG.subtitlePreviewLines > 0 ? CONFIG.subtitlePreviewLines : items.length;
+    const head = items.slice(0, maxLines);
+    const rest = items.slice(maxLines);
+    head.forEach((it) => list.appendChild(makeSubLine(it, bvid)));
 
     if (rest.length) {
       const more = makeSubMore();
-      wrap.appendChild(more);
+      more.title = '展开全部 ' + items.length + ' 条字幕';
+      list.appendChild(more);
+
+      let restNodes = null;
       const toggle = (ev) => {
         if (ev) {
           ev.preventDefault();
           ev.stopPropagation();
         }
         if (more.classList.contains('z-open')) {
-          body.textContent = head.join('\n');
+          if (restNodes) restNodes.forEach((n) => n.remove());
           more.classList.remove('z-open');
           setMoreLabel(more, '展开字幕');
           return;
         }
         // 展开：把剩下的行接在后面，不另开面板、不滚区
-        body.textContent = head.concat(rest).join('\n');
+        if (!restNodes) restNodes = rest.map((it) => makeSubLine(it, bvid));
+        const frag = document.createDocumentFragment();
+        restNodes.forEach((n) => frag.appendChild(n));
+        list.insertBefore(frag, more);
         more.classList.add('z-open');
         if (CONFIG.allowCollapse) setMoreLabel(more, '收起');
         else more.style.display = 'none';
@@ -850,7 +968,7 @@ ${CONFIG.zhihuLayout ? `
 
       const full = rec.d || '';
       const tags = rec.tg || [];
-      const sub = rec.sub || '';
+      const sub = Array.isArray(rec.sub) ? rec.sub : [];
 
       if (full) {
         setLabel(descLabel, '简介');
@@ -883,7 +1001,7 @@ ${CONFIG.zhihuLayout ? `
 
       // 字幕：抓到就显示预览 +「展开字幕」，抓不到也给一个提示
       if (subtitleNeeded(full)) {
-        if (sub) buildSubBlock(slot, sub);
+        if (sub.length) buildSubBlock(slot, sub, bvid);
         else buildSubEmpty(slot);
       }
 
