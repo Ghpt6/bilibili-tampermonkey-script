@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         哔哩哔哩 - 移除首页视频封面图
 // @namespace    https://www.bilibili.com/
-// @version      2.15.0
+// @version      2.15.1
 // @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，「简介」「字幕」各带徽章（点「阅读全文」/「展开字幕」就地展开，字幕展开后右下角悬浮「收起字幕」，不用滚到末尾），字幕按原生时间轴一条一行并标出时间点（点时间点直接跳到视频该处），点「评论」弹窗里直接渲染评论（热门/最新、点赞数、表情、子回复），无简介 / 无字幕会提示，底部「点赞」点了就地给视频点赞（再点取消）/「评论」弹窗看评论 /「收藏」只显示数字不可点
 // @author       you
 // @match        https://www.bilibili.com/*
@@ -221,7 +221,7 @@ ${CONFIG.zhihuLayout ? `
 .z-answer .z-sub-list .z-sub-more { align-self: flex-start; }
 /* 展开后悬浮的「收起字幕」：右上、右下都跟卡片正文对齐（窄屏退化为 22px），字幕太长时不用滚到末尾去点内联那个 */
 .z-sub-float {
-  position: fixed; right: 22px; bottom: 22px; z-index: 2147482900;
+  position: fixed; right: 22px; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); z-index: 2147482900;
   /* 卡片是 max-width 居中的单列，正文右边缘 =（视口 - 卡片宽）/ 2 + 卡片左右 padding 22px */
   right: max(22px, calc((100% - ${CONFIG.maxWidth}px) / 2 + 22px));
   display: inline-flex; align-items: center; gap: 4px;
@@ -256,7 +256,8 @@ ${CONFIG.zhihuLayout ? `
 
 /* 轻提示：点赞成功 / 未登录 / 风控 */
 .z-toast {
-  position: fixed; left: 50%; bottom: 46px; transform: translateX(-50%); z-index: 2147483600;
+  position: fixed; left: 50%; bottom: calc(78px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%); z-index: 2147483600;
   max-width: 80vw; padding: 8px 14px; border-radius: 6px;
   background: rgba(26, 29, 33, .9); color: #fff !important;
   font-size: 13px; line-height: 1.5; text-align: center;
