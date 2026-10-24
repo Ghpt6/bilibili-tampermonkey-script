@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         哔哩哔哩 - 移除首页视频封面图
 // @namespace    https://www.bilibili.com/
-// @version      2.9.1
-// @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，「简介」「字幕」各带徽章（点「阅读全文」/「展开字幕」就地展开），字幕按原生时间轴一条一行并标出时间点（点时间点直接跳到视频该处），点「评论」弹窗里用 iframe 看评论区，无简介 / 无字幕会提示，底部点赞 / 评论 / 收藏
+// @version      2.10.0
+// @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，「简介」「字幕」各带徽章（点「阅读全文」/「展开字幕」就地展开），字幕按原生时间轴一条一行并标出时间点（点时间点直接跳到视频该处），点「评论」弹窗里直接渲染评论（热门/最新、点赞数、表情、子回复），无简介 / 无字幕会提示，底部点赞 / 评论 / 收藏
 // @author       you
 // @match        https://www.bilibili.com/*
 // @match        https://www.bilibili.com
@@ -34,8 +34,11 @@
     /** 是否在卡片底部显示「点赞 / 评论 / 收藏」操作栏（点击会打开视频页） */
     showActions: true,
 
-    /** 点「评论」时是在弹窗里用 iframe 看评论区（true），还是直接跳视频页（false） */
+    /** 点「评论」时是在弹窗里看评论区（true），还是直接跳视频页（false） */
     commentModal: true,
+
+    /** 评论弹窗默认排序：'hot' 热门（按点赞）/ 'new' 最新（按时间） */
+    commentSort: 'hot',
 
     /** 视频没有简介时显示的占位文字 */
     fallbackDesc: '（该 UP 主没有填写简介）',
@@ -395,18 +398,77 @@ ${CONFIG.zhihuLayout ? `
   cursor: pointer;
 }
 .z-modal-close:hover { background: #f1f4f7; color: #1a1a1a; }
-.z-modal-body { position: relative; flex: 1 1 auto; min-height: 0; background: #fff; }
-.z-modal-frame { display: block; width: 100%; height: 100%; border: 0; }
-.z-modal-loading {
-  position: absolute;
-  inset: 0;
+.z-modal-count { flex: none; font-size: 12px; color: #99a0a8; }
+.z-modal-sort {
+  flex: none;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 13px;
-  color: #99a0a8;
-  pointer-events: none;
+  gap: 2px;
+  padding: 2px;
+  background: #f4f6f8;
+  border-radius: 6px;
 }
+.z-modal-sort button {
+  padding: 3px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  font-size: 12px;
+  color: #6b7a8c;
+  cursor: pointer;
+}
+.z-modal-sort button:hover { color: #175199; }
+.z-modal-sort button.on { background: #fff; color: #175199; box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
+/* ===== 评论列表 ===== */
+.z-cmt-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: #fff;
+  padding: 6px 16px 10px;
+  font-size: 14px;
+}
+.z-cmt { display: flex; gap: 10px; padding: 12px 0; border-top: 1px solid #f2f4f7; }
+.z-cmt:first-child { border-top: 0; }
+.z-cmt-top { margin: 8px 0 0; padding: 10px; border-top: 0; background: #fafcff; border-radius: 6px; }
+.z-cmt-face { flex: none; width: 32px; height: 32px; border-radius: 50%; object-fit: cover; background: #f1f3f5; }
+.z-cmt-box { flex: 1 1 auto; min-width: 0; }
+.z-cmt-name { font-size: 13px; font-weight: 600; line-height: 1.4; color: #1a1a1a; }
+.z-cmt-up {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 4px;
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 15px;
+  color: #fff;
+  background: #fb7299;
+  border-radius: 3px;
+  vertical-align: 1px;
+}
+.z-cmt-text { margin-top: 3px; font-size: 14px; line-height: 1.72; color: #1a1a1a; word-break: break-word; }
+.z-cmt-emote { height: 20px; vertical-align: -4px; }
+.z-cmt-at { color: #175199; }
+.z-cmt-pic { display: block; max-width: 100%; max-height: 150px; margin-top: 8px; border-radius: 4px; }
+.z-cmt-meta { display: flex; align-items: center; gap: 14px; margin-top: 6px; font-size: 12px; color: #99a0a8; }
+.z-cmt-subs { margin-top: 8px; padding: 4px 10px; background: #f7f9fb; border-radius: 6px; }
+.z-cmt-subs .z-cmt { padding: 6px 0; border-top: 0; }
+.z-cmt-sub .z-cmt-face { width: 22px; height: 22px; }
+.z-cmt-sub .z-cmt-name { font-size: 12px; font-weight: 500; color: #5b6673; }
+.z-cmt-sub .z-cmt-text { font-size: 13px; }
+.z-cmt-btn {
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 12px;
+  color: #175199;
+  cursor: pointer;
+}
+.z-cmt-btn:hover { text-decoration: underline; }
+.z-cmt-status { padding: 18px 0 12px; text-align: center; font-size: 12px; color: #99a0a8; }
+.z-cmt-status[data-retry="1"] { color: #175199; cursor: pointer; text-decoration: underline; }
 @media (max-width: 640px) {
   .z-mask { padding: 0; }
   .z-modal { width: 100vw; height: 100vh; border-radius: 0; }
@@ -825,53 +887,217 @@ ${CONFIG.zhihuLayout ? `
   };
   const ACT_LABELS = { like: '点赞', comment: '评论', fav: '收藏' };
 
-  /* ---- 评论弹窗：iframe 引视频页，同源所以能进去把播放器 / 简介 / 推荐都 CSS 藏掉，只留评论区 ---- */
-  const MODAL_CLEAN_CSS = `
-#biliMainHeader, .right-container, .fixed-sidenav-storage, .palette-button-wrap,
-.bili-header, .international-header, .bili-feedback, .ad-report, .bili-dialog,
-.pop-live-small-mode, #reco_list { display: none !important; }
-/* 左栅里只留评论区，播放器 / 标题 / 工具栏 / 简介 / 标签 / 资源列表全部不显示 */
-.left-container > *:not(#commentapp) { display: none !important; }
-/* 播放器不能 display:none（B 站自己的脚本会报 undefined.style），挪到看不见的角落里就行 */
-.left-container > #playerWrap {
-  display: block !important;
-  position: absolute !important;
-  left: -10000px !important;
-  top: 0 !important;
-  width: 320px !important;
-  height: 180px !important;
-  overflow: hidden !important;
-  pointer-events: none !important;
-}
-/* 小窗：播放器一旦“滚出视野”就变成 fixed 贴在弹窗右下角，这里直接摁掉 */
-.bpx-player-container, .bpx-player-mini-warp, .bpx-player-context-area,
-.bpx-player-dm-mask-wrap, .bpx-player-row-dm-wrap, .bpx-player-bas-dm-wrap,
-.bpx-player-subtitle-wrap, .bpx-player-new-dialogue-area, .bpx-player-adv-dm-wrap,
-.bas-danmaku, .bili-danmaku-x-dm-rotate, .bpx-player-mini-state { display: none !important; }
-/* 视频页是定宽 1080 的，塞进弹窗要拆成自适应；#mirror-vdcon 是 flex，左栅要占满 */
-.left-container, #mirror-vdcon, .video-container-v1, #app.app-v1 {
-  width: auto !important; max-width: none !important; min-width: 0 !important;
-  float: none !important; padding: 0 !important; margin: 0 !important; left: auto !important;
-}
-.left-container { flex: 1 1 100% !important; width: 100% !important; }
-#commentapp { margin: 0 !important; padding: 6px 14px 24px !important; box-sizing: border-box !important; }
-body { background: #fff !important; overflow-x: hidden !important; }
-`;
+  /* ---- 评论弹窗：直接调评论接口，在弹窗里原生渲染（比 iframe 拉整个视频页快一个数量级） ---- */
+  const REPLY_API = 'https://api.bilibili.com/x/v2/reply?';
+  const REPLY_SUB_API = 'https://api.bilibili.com/x/v2/reply/reply?';
+  const REPLY_PS = 20;
+  const REPLY_SORT = { hot: 1, new: 0 }; // sort=1 按点赞（热门）/ sort=0 按时间（最新）
+
+  const escapeHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (m) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]
+  ));
+  const fixUrl = (u) => {
+    const s = String(u || '');
+    if (!s) return '';
+    if (s.startsWith('//')) return 'https:' + s;
+    // 头像 / 表情接口有时给的是 http://，HTTPS 页面会报 Mixed Content
+    if (s.startsWith('http://')) return 'https://' + s.slice(7);
+    return s;
+  };
+
+  /** 相对时间：刚刚 / 3 分钟前 / 5 小时前 / 2 天前 / 2026-10-20 */
+  function cmtWhen(ts) {
+    const sec = Number(ts) || 0;
+    if (!sec) return '';
+    const diff = Math.max(0, Math.floor(Date.now() / 1000) - sec);
+    if (diff < 60) return '刚刚';
+    if (diff < 3600) return Math.floor(diff / 60) + ' 分钟前';
+    if (diff < 86400) return Math.floor(diff / 3600) + ' 小时前';
+    if (diff < 86400 * 30) return Math.floor(diff / 86400) + ' 天前';
+    const d = new Date(sec * 1000);
+    const p2 = (n) => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate());
+  }
+
+  /** 评论正文 -> 安全 HTML（转义 + 表情图 + @人高亮 + 换行） */
+  function cmtHtml(content) {
+    const c = content || {};
+    let html = escapeHtml(c.message);
+    const emote = c.emote || {};
+    Object.keys(emote).forEach((key) => {
+      const src = fixUrl(emote[key] && emote[key].url);
+      if (!src) return;
+      const img = '<img class="z-cmt-emote" src="' + src + '" alt="' + escapeHtml(key) + '" loading="lazy">';
+      html = html.split(escapeHtml(key)).join(img);
+    });
+    (c.members || []).forEach((m) => {
+      if (!m || !m.uname) return;
+      const at = escapeHtml('@' + m.uname);
+      html = html.split(at).join('<span class="z-cmt-at">' + at + '</span>');
+    });
+    return html.replace(/\n/g, '<br>');
+  }
+
+  function makeCmtPics(content) {
+    const pics = (content && content.pictures) || [];
+    if (!pics.length) return null;
+    const frag = document.createDocumentFragment();
+    pics.slice(0, 3).forEach((p) => {
+      const img = document.createElement('img');
+      img.className = 'z-cmt-pic';
+      img.loading = 'lazy';
+      img.alt = '';
+      img.src = fixUrl(p && p.img_src);
+      frag.appendChild(img);
+    });
+    return frag;
+  }
 
   let modal = null;
 
   function closeCommentModal() {
     if (!modal) return;
-    if (modal.timer) clearInterval(modal.timer);
     document.removeEventListener('keydown', modal.onKey, true);
     document.documentElement.style.overflow = modal.prevOverflow;
     modal.mask.remove();
     modal = null;
   }
 
+  async function fetchAid(bvid) {
+    const json = await (await fetch('https://api.bilibili.com/x/web-interface/view?bvid=' + bvid, { credentials: 'include' })).json();
+    if (json.code !== 0 || !json.data || !json.data.aid) throw new Error(json.message || '获取视频信息失败');
+    return json.data.aid;
+  }
+
+  /** 子回复：展开「N 条回复」，按 pn 翻页并去重 */
+  async function loadSubReplies(btn, subs, reply, ctx, seen) {
+    if (btn.dataset.busy === '1') return;
+    btn.dataset.busy = '1';
+    const pn = Number(btn.dataset.pn) || 1;
+    btn.textContent = '加载中…';
+    try {
+      const rpid = reply.rpid_str || reply.rpid;
+      const url = REPLY_SUB_API + 'oid=' + ctx.aid + '&type=1&root=' + rpid + '&ps=10&pn=' + pn;
+      const json = await (await fetch(url, { credentials: 'include' })).json();
+      if (json.code !== 0) throw new Error(json.message || '加载失败');
+      const data = json.data || {};
+      const frag = document.createDocumentFragment();
+      let added = 0;
+      (data.replies || []).forEach((r) => {
+        const key = String(r.rpid);
+        if (seen.has(key)) return;
+        seen.add(key);
+        frag.appendChild(makeCommentItem(r, { sub: true, upMid: ctx.upMid }));
+        added++;
+      });
+      subs.appendChild(frag);
+      const total = Number((data.page && data.page.count) || 0);
+      if (added && seen.size < total) {
+        btn.dataset.pn = String(pn + 1);
+        btn.textContent = '展开更多回复（还有 ' + (total - seen.size) + ' 条）';
+      } else {
+        btn.remove();
+      }
+    } catch (e) {
+      btn.textContent = '加载失败，点我重试';
+    } finally {
+      if (btn.isConnected) btn.dataset.busy = '0';
+    }
+  }
+
+  /** 一条评论（顶层 / 子回复共用） */
+  function makeCommentItem(reply, opts) {
+    const o = opts || {};
+    const item = document.createElement('div');
+    item.className = 'z-cmt' + (o.sub ? ' z-cmt-sub' : '');
+
+    const face = document.createElement('img');
+    face.className = 'z-cmt-face';
+    face.loading = 'lazy';
+    face.alt = '';
+    face.src = fixUrl(reply.member && reply.member.avatar);
+    face.addEventListener('error', () => { face.style.visibility = 'hidden'; }, { once: true });
+
+    const boxEl = document.createElement('div');
+    boxEl.className = 'z-cmt-box';
+
+    const name = document.createElement('div');
+    name.className = 'z-cmt-name';
+    name.textContent = (reply.member && reply.member.uname) || '匿名用户';
+    if (o.upMid && reply.member && String(reply.member.mid) === String(o.upMid)) {
+      const up = document.createElement('span');
+      up.className = 'z-cmt-up';
+      up.textContent = 'UP';
+      name.appendChild(up);
+    }
+
+    const textEl = document.createElement('div');
+    textEl.className = 'z-cmt-text';
+    textEl.innerHTML = cmtHtml(reply.content);
+    const pics = makeCmtPics(reply.content);
+    if (pics) textEl.appendChild(pics);
+
+    const meta = document.createElement('div');
+    meta.className = 'z-cmt-meta';
+    const when = document.createElement('span');
+    when.textContent = cmtWhen(reply.ctime);
+    meta.appendChild(when);
+    if (Number(reply.like) > 0) {
+      const like = document.createElement('span');
+      like.className = 'z-cmt-like';
+      like.textContent = '👍 ' + fmtNum(reply.like);
+      meta.appendChild(like);
+    }
+
+    boxEl.append(name, textEl, meta);
+
+    // 子回复：接口一般直接带 3 条预览，剩下的点按钮再拉
+    const subs = document.createElement('div');
+    subs.className = 'z-cmt-subs';
+    const preview = reply.replies || [];
+    const seen = new Set();
+    preview.forEach((r) => {
+      const key = String(r.rpid);
+      seen.add(key);
+      subs.appendChild(makeCommentItem(r, { sub: true, upMid: o.upMid }));
+    });
+    if (subs.childElementCount) boxEl.appendChild(subs);
+
+    const total = Number(reply.rcount) || 0;
+    if (!o.sub && total > 0 && seen.size < total && o.aid) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'z-cmt-btn';
+      btn.dataset.pn = '1';
+      btn.textContent = seen.size
+        ? '展开更多回复（还有 ' + (total - seen.size) + ' 条）'
+        : '共 ' + total + ' 条回复';
+      btn.addEventListener('click', () => {
+        if (!subs.parentNode) boxEl.insertBefore(subs, btn);
+        loadSubReplies(btn, subs, reply, { aid: o.aid, upMid: o.upMid }, seen);
+      });
+      boxEl.appendChild(btn);
+    }
+
+    item.append(face, boxEl);
+    return item;
+  }
+
   function openCommentModal(bvid, title) {
     if (!CONFIG.commentModal || !bvid) return;
     if (modal) closeCommentModal();
+
+    const token = {};
+    const state = {
+      aid: 0,
+      sort: REPLY_SORT[CONFIG.commentSort] !== undefined ? CONFIG.commentSort : 'hot',
+      pn: 0,
+      done: false,
+      loading: false,
+      upMid: 0,
+      count: 0,
+      seen: new Set(),
+    };
 
     const mask = document.createElement('div');
     mask.className = 'z-mask';
@@ -883,22 +1109,51 @@ body { background: #fff !important; overflow-x: hidden !important; }
     box.setAttribute('aria-modal', 'true');
     box.setAttribute('aria-label', '评论');
 
+    // ---- 头部：徽章 / 标题 / 共 N 条 / 排序 / 在B站打开 / 关闭 ----
     const head = document.createElement('div');
     head.className = 'z-modal-head';
+
     const badge = document.createElement('span');
     badge.className = 'z-modal-badge';
     badge.textContent = '评论';
+
     const ttl = document.createElement('div');
     ttl.className = 'z-modal-title';
     ttl.textContent = title || '视频评论';
     ttl.title = ttl.textContent;
-    const open = document.createElement('a');
-    open.className = 'z-modal-link';
-    open.href = 'https://www.bilibili.com/video/' + bvid + '/';
-    open.target = '_blank';
-    open.rel = 'noopener';
-    open.textContent = '在B站打开';
-    open.addEventListener('click', (ev) => ev.stopPropagation());
+
+    const countEl = document.createElement('span');
+    countEl.className = 'z-modal-count';
+
+    const sortBox = document.createElement('div');
+    sortBox.className = 'z-modal-sort';
+    const sortBtns = {};
+    [['hot', '热门'], ['new', '最新']].forEach(([key, label]) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = label;
+      b.dataset.sort = key;
+      b.addEventListener('click', () => {
+        if (state.sort === key) return;
+        state.sort = key;
+        sortBtns.hot.classList.toggle('on', key === 'hot');
+        sortBtns.new.classList.toggle('on', key === 'new');
+        resetList();
+        loadPage();
+      });
+      sortBtns[key] = b;
+      sortBox.appendChild(b);
+    });
+    sortBtns[state.sort].classList.add('on');
+
+    const openLink = document.createElement('a');
+    openLink.className = 'z-modal-link';
+    openLink.href = 'https://www.bilibili.com/video/' + bvid + '/';
+    openLink.target = '_blank';
+    openLink.rel = 'noopener';
+    openLink.textContent = '在B站打开';
+    openLink.addEventListener('click', (ev) => ev.stopPropagation());
+
     const close = document.createElement('button');
     close.type = 'button';
     close.className = 'z-modal-close';
@@ -911,21 +1166,25 @@ body { background: #fff !important; overflow-x: hidden !important; }
       ev.stopPropagation();
       closeCommentModal();
     });
-    head.append(badge, ttl, open, close);
 
-    const body = document.createElement('div');
-    body.className = 'z-modal-body';
-    const loading = document.createElement('div');
-    loading.className = 'z-modal-loading';
-    loading.textContent = '评论区加载中…';
+    head.append(badge, ttl, countEl, sortBox, openLink, close);
 
-    const frame = document.createElement('iframe');
-    frame.className = 'z-modal-frame';
-    frame.title = '视频评论区';
-    frame.src = 'https://www.bilibili.com/video/' + bvid + '/';
+    // ---- 正文：评论列表（自己在弹窗内部滚） ----
+    const bodyEl = document.createElement('div');
+    bodyEl.className = 'z-cmt-body';
+    const listEl = document.createElement('div');
+    listEl.className = 'z-cmt-list';
+    const statusEl = document.createElement('div');
+    statusEl.className = 'z-cmt-status';
+    bodyEl.append(listEl, statusEl);
+    statusEl.addEventListener('click', () => {
+      if (statusEl.dataset.retry !== '1') return;
+      statusEl.dataset.retry = '0';
+      state.loading = false;
+      loadPage();
+    });
 
-    body.append(frame, loading);
-    box.append(head, body);
+    box.append(head, bodyEl);
     mask.appendChild(box);
 
     const onKey = (ev) => {
@@ -941,58 +1200,105 @@ body { background: #fff !important; overflow-x: hidden !important; }
     (document.body || document.documentElement).appendChild(mask);
     try { close.focus({ preventScroll: true }); } catch (e) { /* 忽略 */ }
 
-    modal = { mask, frame, timer: null, onKey, prevOverflow };
+    modal = { mask, onKey, prevOverflow, token };
 
-    // iframe 同源，可以进去注样式：藏播放器/简介/推荐，只留评论区
-    let passes = 0;
-    const startedAt = Date.now();
-    const prep = () => {
-      let d = null;
-      try { d = frame.contentDocument; } catch (e) { d = null; }
-      if (!d || !d.documentElement) return false;
-      if (!d.getElementById('z-modal-clean')) {
-        const st = d.createElement('style');
-        st.id = 'z-modal-clean';
-        st.textContent = MODAL_CLEAN_CSS;
-        (d.head || d.documentElement).appendChild(st);
+    // ---- 内部工具 ----
+    function setStatus(text, opts) {
+      const o = opts || {};
+      statusEl.textContent = text || '';
+      statusEl.style.display = text ? '' : 'none';
+      statusEl.dataset.retry = o.retry ? '1' : '0';
+    }
+
+    function renderCount() {
+      countEl.textContent = state.count ? '共 ' + fmtNum(state.count) + ' 条' : '';
+    }
+
+    function resetList() {
+      state.pn = 0;
+      state.done = false;
+      state.loading = false;
+      state.seen.clear();
+      listEl.textContent = '';
+      setStatus('加载中…');
+    }
+
+    async function loadPage() {
+      if (state.loading || state.done || !state.aid) return;
+      state.loading = true;
+      setStatus('加载中…');
+      try {
+        const url = REPLY_API + 'oid=' + state.aid + '&type=1&pn=' + (state.pn + 1)
+          + '&ps=' + REPLY_PS + '&sort=' + REPLY_SORT[state.sort];
+        const json = await (await fetch(url, { credentials: 'include' })).json();
+        if (!modal || modal.token !== token) return;
+        if (json.code !== 0) {
+          if (json.code === -352 || json.code === -412) blockApi();
+          throw new Error(json.code === 12002 ? '评论区未开放' : (json.message || '加载失败'));
+        }
+        const data = json.data || {};
+        state.pn++;
+        state.upMid = (data.upper && data.upper.mid) || state.upMid;
+        state.count = Number(data.page && data.page.count) || state.count;
+        renderCount();
+
+        const frag = document.createDocumentFragment();
+        let added = 0;
+        const addNode = (r, isTop) => {
+          if (!r || !r.rpid) return;
+          const key = String(r.rpid);
+          if (state.seen.has(key)) return;
+          state.seen.add(key);
+          const node = makeCommentItem(r, { aid: state.aid, upMid: state.upMid });
+          if (isTop) node.classList.add('z-cmt-top');
+          frag.appendChild(node);
+          added++;
+        };
+        if (state.pn === 1) {
+          if (data.top && data.top.rpid) addNode(data.top, true);
+          (data.top_replies || []).forEach((r) => addNode(r, true));
+        }
+        const list = data.replies || [];
+        list.forEach((r) => addNode(r, false));
+        listEl.appendChild(frag);
+
+        if (!listEl.childElementCount) {
+          state.done = true;
+          setStatus('还没有评论');
+        } else if (list.length < REPLY_PS) {
+          state.done = true;
+          setStatus('没有更多评论了');
+        } else {
+          setStatus('');
+        }
+      } catch (e) {
+        setStatus((e && e.message ? e.message : '加载失败') + '，点这里重试', { retry: true });
+      } finally {
+        state.loading = false;
       }
-      // 别让弹窗里的播放器跑起来（占流量 / 出声 / 变成右下角小窗）
-      d.querySelectorAll('video').forEach((v) => {
-        try { v.pause(); v.muted = true; } catch (e) { /* 忽略 */ }
-      });
-      const app = d.querySelector('#commentapp') || d.querySelector('bili-comments');
-      if (!app) return false;
-      // 评论列表是 shadow DOM 异步渲染的，看到内容才叫真的好了
-      const bc = d.querySelector('bili-comments');
-      const loaded = !!bc && !!bc.shadowRoot && bc.shadowRoot.childElementCount > 0;
-      const ready = loaded || (Date.now() - startedAt > 5000 && app.childElementCount > 0);
-      if (!ready) return false;
-      // 评论出来了，播放器就没用了：整个删掉，视频流也一起断（不然每次都要拖几十 MB）
-      // 注意只能在评论渲染完之后删，删早了 B 站自己的页面初始化会挂，评论区也跟着不出来
-      const pw = d.querySelector('#playerWrap');
-      if (pw) pw.remove();
-      if (passes < 3) {
-        d.documentElement.scrollTop = 0;
-        if (d.body) d.body.scrollTop = 0;
+    }
+
+    // 滚到底自动加载下一页 / 提前 300px 预加载
+    bodyEl.addEventListener('scroll', () => {
+      if (!modal || modal.token !== token) return;
+      if (bodyEl.scrollTop + bodyEl.clientHeight < bodyEl.scrollHeight - 300) return;
+      loadPage();
+    });
+
+    // 先把 aid 拿到（卡片上一般已经有了，没有就查一次 view 接口）
+    (async () => {
+      try {
+        state.aid = await fetchAid(bvid);
+      } catch (e) {
+        if (modal && modal.token === token) {
+          setStatus((e && e.message ? e.message : '获取视频信息失败') + '，点这里重试', { retry: true });
+          statusEl.dataset.retry = '0';
+        }
+        return;
       }
-      passes++;
-      if (loading.parentNode) loading.remove();
-      return passes >= 3;
-    };
-    prep();
-    // 评论区异步渲染：注完样式后再盯一会儿，顺便反复暂停播放器
-    modal.timer = setInterval(() => {
-      if (!modal) return;
-      let done = false;
-      try { done = prep(); } catch (e) { done = false; }
-      if (done && modal && modal.timer) { clearInterval(modal.timer); modal.timer = null; }
-    }, 500);
-    // 最多盯 20 秒，别一直轮询
-    setTimeout(() => {
-      if (!modal) return;
-      if (modal.timer) { clearInterval(modal.timer); modal.timer = null; }
-      if (loading.parentNode) loading.textContent = '评论区没加载出来？点右上角「在B站打开」';
-    }, 20000);
+      if (!modal || modal.token !== token) return;
+      loadPage();
+    })();
   }
 
   const fmtNum = (n) => {
@@ -1019,7 +1325,7 @@ body { background: #fff !important; overflow-x: hidden !important; }
         + '<path d="' + ICONS[key] + '"/></svg>'
         + '<span class="z-act-num">—</span>';
       if (key === 'comment' && CONFIG.commentModal && bvid) {
-        // 评论不跳页，就地开弹窗看
+        // 评论不跳页，就地开弹窗看（拿 aid 查评论接口）
         a.removeAttribute('target');
         a.setAttribute('role', 'button');
         a.title = '在弹窗里看评论区';
