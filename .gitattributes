@@ -1,0 +1,4 @@
+# 统一使用 LF 换行，避免不同机器 diff 噪音
+* text=auto eol=lf
+*.user.js text eol=lf
+*.md text eol=lf
