@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         哔哩哔哩 - 移除首页视频封面图
 // @namespace    https://www.bilibili.com/
-// @version      2.19.1
+// @version      2.20.0
 // @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，「简介」「字幕」各带徽章（点「阅读全文」/「展开字幕」就地展开，字幕展开后右下角悬浮「收起字幕」，不用滚到末尾），字幕按原生时间轴一条一行并标出时间点（点时间点直接跳到视频该处），点「评论」弹窗里直接渲染评论（热门/最新、点赞数、表情、子回复），无简介 / 无字幕会提示，底部「点赞」点了就地给视频点赞（再点取消）/「评论」弹窗看评论 /「收藏」只显示数字不可点，另加一块质量指标仪表盘（互动率环形 + 五维雷达 + 赞播比/评论率/收藏率/转发率/互动率/评赞比/藏赞比/转赞比/理性认可率 9 张轨道卡），可一键收成一行 chips
 // @author       you
 // @match        https://www.bilibili.com/*
@@ -35,8 +35,14 @@
     /** 知乎风单列布局（关掉就只保留"去封面"效果） */
     zhihuLayout: true,
 
-    /** 单列内容区最大宽度（px），知乎是 690 左右 */
-    maxWidth: 760,
+    /** 单列内容区宽度：占视口的比例（2/3）。实际宽度 = clamp(minWidth, 比例 × 视口, maxWidth) */
+    widthRatio: 2 / 3,
+
+    /** 比例算出来的宽度下限（px）：视口窄的时候别把卡片挤成一条 */
+    minWidth: 640,
+
+    /** 绝对上限（px）：1920 下正好是 2/3（1280）；只有 >2400 的超宽屏才会被它卡住（2560 上是 1600 ≈ 62%） */
+    maxWidth: 1600,
 
     /** 简介最多预览多少个字，超出才出现「阅读全文」 */
     descMaxChars: 200,
@@ -106,6 +112,12 @@
     blockImageLoad: false,
   };
 
+  /** 卡片宽度（CSS 表达式）：2/3 视口，夹在 minWidth ~ maxWidth 之间。
+   *  用 vw 而不是 % —— 卡片的父级 .feed2 被 .bili-feed4-layout 的 60px 内边距挤窄了，
+   *  按百分比算出来只有视口的 60%，不是想要的 2/3。
+   *  最窄时由 CSS 里的 max-width: calc(100% - 24px) 兑底，不会横溢出，也不用担心 */
+  const CARD_W = `min(${CONFIG.maxWidth}px, max(${CONFIG.minWidth}px, ${(CONFIG.widthRatio * 100).toFixed(3)}vw))`;
+
   /* ===================== 2. CSS ===================== */
   const css = `
 /* ===== 封面：全部不显示 ===== */
@@ -134,7 +146,7 @@ ${CONFIG.zhihuLayout ? `
 .bili-feed4 { background: #f6f7f8 !important; }
 .feed2, .recommended-container_floor-aside { display: block !important; width: 100% !important; background: transparent !important; }
 .feed2 .container.is-version8 {
-  display: block !important; width: 100% !important; max-width: ${CONFIG.maxWidth}px !important;
+  display: block !important; width: ${CARD_W} !important; max-width: calc(100% - 24px) !important;
   margin: 16px auto !important; padding: 0 !important; box-sizing: border-box !important;
   background: #fff !important; border-radius: 2px !important; overflow: hidden !important;
 }
@@ -225,8 +237,8 @@ ${CONFIG.zhihuLayout ? `
 /* 展开后悬浮的「收起字幕」：右上、右下都跟卡片正文对齐（窄屏退化为 22px），字幕太长时不用滚到末尾去点内联那个 */
 .z-sub-float {
   position: fixed; right: 22px; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); z-index: 2147482900;
-  /* 卡片是 max-width 居中的单列，正文右边缘 =（视口 - 卡片宽）/ 2 + 卡片左右 padding 22px */
-  right: max(22px, calc((100% - ${CONFIG.maxWidth}px) / 2 + 22px));
+  /* 卡片是居中的单列，正文右边缘 =（视口 - 卡片宽）/ 2 + 卡片左右 padding 22px */
+  right: max(22px, calc((100% - ${CARD_W}) / 2 + 22px));
   display: inline-flex; align-items: center; gap: 4px;
   padding: 9px 15px 9px 16px; border-radius: 999px;
   background: rgba(26, 29, 33, .92); color: #fff !important;
@@ -301,7 +313,8 @@ ${CONFIG.zhihuLayout ? `
 
 /* 9 张指标卡 */
 .z-q-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
+  /* 固定 3 列：9 张卡正好 3×3，卡片变宽后也不会突然变成 4 列留一行孤儿 */
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px; margin-top: 8px;
 }
 .z-quality .z-qcard {
@@ -354,7 +367,7 @@ ${CONFIG.zhihuLayout ? `
   .z-q-sum { flex: 1 1 150px; }
   .z-q-sum p { font-size: 12px; }
   .z-q-radar { width: 140px; margin: 4px auto 0; }
-  .z-q-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .z-q-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 /* 轻提示：点赞成功 / 未登录 / 风控 */
