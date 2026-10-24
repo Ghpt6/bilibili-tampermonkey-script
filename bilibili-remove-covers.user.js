@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         哔哩哔哩 - 移除首页视频封面图
 // @namespace    https://www.bilibili.com/
-// @version      2.15.1
+// @version      2.16.1
 // @description  首页去封面 + 知乎风单列信息流：标题=视频标题，作者=UP主，「简介」「字幕」各带徽章（点「阅读全文」/「展开字幕」就地展开，字幕展开后右下角悬浮「收起字幕」，不用滚到末尾），字幕按原生时间轴一条一行并标出时间点（点时间点直接跳到视频该处），点「评论」弹窗里直接渲染评论（热门/最新、点赞数、表情、子回复），无简介 / 无字幕会提示，底部「点赞」点了就地给视频点赞（再点取消）/「评论」弹窗看评论 /「收藏」只显示数字不可点
 // @author       you
 // @match        https://www.bilibili.com/*
@@ -818,6 +818,16 @@ ${CONFIG.zhihuLayout ? `
     if (node && node.textContent !== text) node.textContent = text;
   }
 
+  /** 收起「展开字幕 / 阅读全文」后把滚动条放回展开前的位置：
+   *  内容一缩文档就变短，滚动条原地不动的话，用户会眼看页面跳到别的卡片去 */
+  function restoreScroll(top) {
+    const max = Math.max(0, (document.documentElement.scrollHeight || 0) - window.innerHeight);
+    const y = Math.max(0, Math.min(Number(top) || 0, max));
+    if (Math.abs(window.scrollY - y) < 2) return;
+    // 直接瞬移：内容刚缩掉几百行，平滑动画会被 scroll anchoring / 布局变化折腾得跑不到位
+    window.scrollTo(0, y);
+  }
+
   /** 「阅读全文」/「展开字幕」这种就地展开的文字按钮 */
   function makeMore(text, extraClass) {
     const more = el('span', extraClass ? 'z-more ' + extraClass : 'z-more');
@@ -849,7 +859,7 @@ ${CONFIG.zhihuLayout ? `
   /* ===== 展开字幕后的「收起」悬浮按钮 =====
    * 字幕展开后可能几百行，内联「收起」被顶到很下面，得一路滚到底才点得到。
    * 所以：内联「收起」不在视口里、而字幕块还在视口里时，右下角浮一个「收起字幕」，
-   * 点它＝点内联的那个（并且顺手把字幕块滚回视野中间，别让页面突然跳到别处）。 */
+   * 点它＝点内联的那个（收起后滚动条都由 restoreScroll 还原到展开前的位置）。 */
   let zFloatBtn = null;
   let zFloatOwner = null;
   let zFloatIO = null;
@@ -859,7 +869,7 @@ ${CONFIG.zhihuLayout ? `
     const btn = el('span', 'z-sub-float');
     btn.setAttribute('role', 'button');
     btn.tabIndex = 0;
-    btn.title = '收起字幕，回到字幕开头';
+    btn.title = '收起字幕，回到展开前的位置';
     btn.innerHTML = '<span class="z-more-text">收起字幕</span>' + CHEV;
     const run = (ev) => {
       if (ev) {
@@ -868,12 +878,8 @@ ${CONFIG.zhihuLayout ? `
       }
       const owner = zFloatOwner;
       if (!owner) return;
+      // 收起 + 把滚动条还原到展开前的位置（toggle 内部已处理，这里不用再滚）
       owner.toggle();
-      // 收起后行数骤减，页面会往上跳，顺手把字幕块拉回视野
-      if (owner.wrap && owner.wrap.isConnected) {
-        try { owner.wrap.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
-        catch (e) { owner.wrap.scrollIntoView(); }
-      }
     };
     btn.addEventListener('click', run);
     btn.addEventListener('keydown', (ev) => {
@@ -951,6 +957,7 @@ ${CONFIG.zhihuLayout ? `
     list.appendChild(more);
 
     let restNodes = null;
+    let expandScroll = 0; // 展开时的滚动位置，收起时还原
     const toggle = (ev) => {
       if (ev) {
         ev.preventDefault();
@@ -961,9 +968,11 @@ ${CONFIG.zhihuLayout ? `
         more.classList.remove('z-open');
         setMoreLabel(more, '展开字幕');
         releaseFloat(wrap);
+        restoreScroll(expandScroll);
         return;
       }
       // 展开：把剩下的行接在后面，不另开面板、不内部滚动
+      expandScroll = window.scrollY;
       if (!restNodes) restNodes = rest.map((it) => makeSubLine(it, bvid));
       const frag = document.createDocumentFragment();
       restNodes.forEach((n) => frag.appendChild(n));
@@ -995,6 +1004,7 @@ ${CONFIG.zhihuLayout ? `
   }
 
   function bindExpand(descEl, moreEl, fullText) {
+    let expandScroll = 0; // 展开时的滚动位置，收起时还原
     const toggle = (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
@@ -1003,8 +1013,10 @@ ${CONFIG.zhihuLayout ? `
         descEl.classList.remove('z-expanded');
         moreEl.classList.remove('z-open');
         setMoreLabel(moreEl, '阅读全文');
+        restoreScroll(expandScroll);
         return;
       }
+      expandScroll = window.scrollY;
       descEl.textContent = fullText;
       descEl.classList.add('z-expanded');
       moreEl.classList.add('z-open');
